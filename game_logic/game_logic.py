@@ -1,0 +1,578 @@
+"""
+game_logic.py
+=============
+Core Python functions for the Reel Connections game.
+
+Saved/cached format
+-------------------
+game_data.pkl   – Python dict with keys:
+    "movies"  : {movie_id: {"title": str, "box_office": float, "actor_ids": list}}
+    "actors"  : {actor_id: {"name": str, "movie_ids": list}}
+"""
+
+import pickle
+import random
+import heapq
+from collections import deque
+from pathlib import Path
+import pandas as pd
+
+# ---------------------------------------------------------------------------
+# 1. Build and save efficient data structures from parquet files
+# ---------------------------------------------------------------------------
+
+def build_and_save(
+    movies_parquet: str,
+    actors_parquet: str,
+    output_path: str = "game_data.pkl",
+) -> dict:
+    """
+    Read parquet files, restructure them into nested dicts, and saves as file.
+
+    Parameters
+    ----------
+    movies_parquet : str
+        Path to movies.parquet.
+    actors_parquet : str
+        Path to actors.parquet.
+    output_path : str
+        Destination path for the pickled data (default: "game_data.pkl").
+
+    Returns
+    -------
+    dict
+        The structured game data that was saved.
+    """
+    movies_df = pd.read_parquet(movies_parquet)
+    actors_df = pd.read_parquet(actors_parquet)
+
+    # Build movie dict and simultaneously collect movie_ids per actor
+    actor_to_movies: dict = {}  # nconst -> [tconst, ...]
+
+    movies: dict = {}
+    for _, row in movies_df.iterrows():
+        year = row["startYear"]
+        year_str = f" ({int(year)})" if pd.notna(year) else ""
+        title = f"{row['originalTitle']}{year_str}"
+
+        actor_ids = [aid.strip() for aid in str(row["personIds"]).split(",") if aid.strip()]
+
+        movies[row["tconst"]] = {
+            "title": title,
+            "box_office": float(row["box_office_x"]) if row["box_office_x"] is not None else 0.0,
+            "actor_ids": actor_ids,
+        }
+
+        # Invert the relationship: track which movies each actor appears in
+        for actor_id in actor_ids:
+            actor_to_movies.setdefault(actor_id, []).append(row["tconst"])
+
+    # Remove this chunk to include all movies even with no box office sales info (0 sales)
+    # Remove movies with zero or missing box office values
+    removed_movies = {mid for mid, info in movies.items() if info["box_office"] == 0.0}
+    movies = {mid: info for mid, info in movies.items() if mid not in removed_movies}
+    # Remove references to filtered movies from actor_to_movies
+    for actor_id in actor_to_movies:
+        actor_to_movies[actor_id] = [mid for mid in actor_to_movies[actor_id] if mid not in removed_movies]
+
+    actors: dict = {}
+    for _, row in actors_df.iterrows():
+        nconst = row["nconst"]
+        actors[nconst] = {
+            "name": row["primaryName"],
+            "movie_ids": actor_to_movies.get(nconst, []),
+        }
+    # Remove actors with no associated movies
+    actors = {nconst: info for nconst, info in actors.items() if info["movie_ids"]}
+
+    data = {"movies": movies, "actors": actors}
+
+    with open(output_path, "wb") as f:
+        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    print(f"[build_and_save] Saved {len(movies)} movies and {len(actors)} actors → {output_path}")
+    return data
+
+# ---------------------------------------------------------------------------
+# 2. Load the pre-built data structures
+# ---------------------------------------------------------------------------
+
+def load_data(path: str = "game_data.pkl") -> dict:
+    """
+    Load game data from a pickled file.
+
+    Parameters
+    ----------
+    path : str
+        Path to the pickled file created by build_and_save().
+
+    Returns
+    -------
+    dict
+        {"movies": {...}, "actors": {...}}
+    """
+    if not Path(path).exists():
+        raise FileNotFoundError(
+            f"Game data file '{path}' not found. "
+            "Run build_and_save() first to generate it."
+        )
+    with open(path, "rb") as f:
+        data = pickle.load(f)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# 3. Select random starting and target actors
+# ---------------------------------------------------------------------------
+
+def get_random_actors(data: dict) -> tuple[str, str]:
+    """
+    Return two distinct, randomly chosen actor IDs.
+
+    Parameters
+    ----------
+    data : dict
+        Game data from load_data() or build_and_save().
+
+    Returns
+    -------
+    (start_actor_id, target_actor_id) : tuple[str, str]
+    """
+    actor_ids = list(data["actors"].keys())
+    if len(actor_ids) < 2:
+        raise ValueError("Need at least 2 actors in the dataset.")
+    start, target = random.sample(actor_ids, 2)
+    return start, target
+
+
+# ---------------------------------------------------------------------------
+# 4. Get all movies for an actor
+# ---------------------------------------------------------------------------
+
+def get_movies_for_actor(actor_id: str, data: dict) -> dict:
+    """
+    Return a dict of {movie_id: title} for every movie an actor appears in.
+
+    Parameters
+    ----------
+    actor_id : str
+    data : dict
+
+    Returns
+    -------
+    dict  {movie_id: title}
+    """
+    if actor_id not in data["actors"]:
+        raise KeyError(f"Actor ID '{actor_id}' not found.")
+    movies_lookup = data["movies"]
+    return {
+        mid: movies_lookup[mid]["title"]
+        for mid in data["actors"][actor_id]["movie_ids"]
+        if mid in movies_lookup
+    }
+
+
+# ---------------------------------------------------------------------------
+# 5. Get all actors for a movie
+# ---------------------------------------------------------------------------
+
+def get_actors_for_movie(movie_id: str, data: dict) -> dict:
+    """
+    Return a dict of {actor_id: actor_name} for every actor in a movie.
+
+    Parameters
+    ----------
+    movie_id : str
+    data : dict
+
+    Returns
+    -------
+    dict  {actor_id: actor_name}
+    """
+    if movie_id not in data["movies"]:
+        raise KeyError(f"Movie ID '{movie_id}' not found.")
+    actors_lookup = data["actors"]
+    return {
+        aid: actors_lookup[aid]["name"]
+        for aid in data["movies"][movie_id]["actor_ids"]
+        if aid in actors_lookup
+    }
+
+
+# ---------------------------------------------------------------------------
+# 6. Optimal shortest path – bidirectional BFS
+# ---------------------------------------------------------------------------
+
+def _reconstruct_path(
+    forward_parents: dict,
+    backward_parents: dict,
+    meeting_actor: str,
+    start: str,
+    target: str,
+) -> list:
+    """
+    Reconstruct the full ordered path of (movie_id, actor_id) pairs from the
+    bidirectional BFS parent maps.
+
+    Each "step" is a (movie_id, actor_id) tuple representing choosing that
+    movie and then that actor.  The starting actor itself is not a step.
+    """
+    # Build forward segment: start → meeting_actor
+    forward_steps: list = []
+    node = meeting_actor
+    while node != start:
+        movie_id, parent = forward_parents[node]
+        forward_steps.append((movie_id, node))
+        node = parent
+    forward_steps.reverse()
+
+    # Build backward segment: meeting_actor → target
+    backward_steps: list = []
+    node = meeting_actor
+    while node != target:
+        movie_id, child = backward_parents[node]
+        backward_steps.append((movie_id, child))
+        node = child
+
+    return forward_steps + backward_steps
+
+
+def calculate_shortest_path(start: str, target: str, data: dict) -> dict:
+    """
+    Bidirectional BFS to find the path with the fewest (movie, actor) steps.
+
+    Parameters
+    ----------
+    start  : str  Actor ID of starting actor.
+    target : str  Actor ID of target actor.
+    data   : dict Game data.
+
+    Returns
+    -------
+    dict with keys:
+        "steps"       : int   – number of (movie, actor) selections.
+        "path"        : list  – ordered list of (movie_id, actor_id) tuples.
+        "is_successful": bool
+    """
+    if start == target:
+        return {"steps": 0, "path": [], "is_successful": True}
+
+    actors = data["actors"]
+    movies = data["movies"]
+
+    # forward_parents[actor] = (via_movie, parent_actor)
+    forward_parents: dict = {start: None}
+    backward_parents: dict = {target: None}  # backward_parents[actor] = (via_movie, child_actor)
+
+    forward_queue: deque = deque([start])
+    backward_queue: deque = deque([target])
+
+    forward_visited: set = {start}
+    backward_visited: set = {target}
+
+    def expand_forward(queue, f_visited, f_parents, b_visited) -> str | None:
+        actor = queue.popleft()
+        for mid in actors.get(actor, {}).get("movie_ids", []):
+            for neighbor in movies.get(mid, {}).get("actor_ids", []):
+                if neighbor not in f_visited:
+                    f_visited.add(neighbor)
+                    f_parents[neighbor] = (mid, actor)
+                    queue.append(neighbor)
+                if neighbor in b_visited:
+                    return neighbor  # meeting point found
+        return None
+
+    def expand_backward(queue, b_visited, b_parents, f_visited) -> str | None:
+        actor = queue.popleft()
+        for mid in actors.get(actor, {}).get("movie_ids", []):
+            for neighbor in movies.get(mid, {}).get("actor_ids", []):
+                if neighbor not in b_visited:
+                    b_visited.add(neighbor)
+                    b_parents[neighbor] = (mid, actor)
+                    queue.append(neighbor)
+                if neighbor in f_visited:
+                    return neighbor
+        return None
+
+    while forward_queue or backward_queue:
+        # Expand whichever frontier is smaller
+        if forward_queue and (not backward_queue or len(forward_queue) <= len(backward_queue)):
+            if forward_queue:
+                meeting = expand_forward(forward_queue, forward_visited, forward_parents, backward_visited)
+                if meeting is not None:
+                    path = _reconstruct_path(forward_parents, backward_parents, meeting, start, target)
+                    return {"steps": len(path), "path": path, "is_successful": True}
+        if backward_queue:
+            meeting = expand_backward(backward_queue, backward_visited, backward_parents, forward_visited)
+            if meeting is not None:
+                path = _reconstruct_path(forward_parents, backward_parents, meeting, start, target)
+                return {"steps": len(path), "path": path, "is_successful": True}
+
+    return {"steps": -1, "path": [], "is_successful": False}
+
+
+# ---------------------------------------------------------------------------
+# 7. Optimal lowest box-office path – bidirectional Dijkstra's
+# ---------------------------------------------------------------------------
+
+def _reconstruct_dijkstra_path(
+    forward_parents: dict,
+    backward_parents: dict,
+    meeting_actor: str,
+    start: str,
+    target: str,
+) -> list:
+    """Same reconstruction logic as BFS version."""
+    forward_steps: list = []
+    node = meeting_actor
+    while node != start:
+        movie_id, parent = forward_parents[node]
+        forward_steps.append((movie_id, node))
+        node = parent
+    forward_steps.reverse()
+
+    backward_steps: list = []
+    node = meeting_actor
+    while node != target:
+        movie_id, child = backward_parents[node]
+        backward_steps.append((movie_id, child))
+        node = child
+
+    return forward_steps + backward_steps
+
+
+def calculate_lowest_boxoffice_path(start: str, target: str, data: dict) -> dict:
+    """
+    Bidirectional Dijkstra's to find the path with the lowest total
+    box-office sales across all chosen movies.
+
+    The edge weight between two actors is the box-office revenue of the
+    movie connecting them.
+
+    Parameters
+    ----------
+    start  : str  Actor ID of starting actor.
+    target : str  Actor ID of target actor.
+    data   : dict Game data.
+
+    Returns
+    -------
+    dict with keys:
+        "total_box_office" : float – sum of box office sales along optimal path.
+        "path"             : list  – ordered list of (movie_id, actor_id) tuples.
+        "is_successful"    : bool
+    """
+    if start == target:
+        return {"total_box_office": 0.0, "path": [], "is_successful": True}
+
+    actors = data["actors"]
+    movies = data["movies"]
+
+    INF = float("inf")
+
+    # dist_f[actor] = best cost from start so far
+    dist_f: dict = {start: 0.0}
+    dist_b: dict = {target: 0.0}
+
+    # parents: actor -> (via_movie, parent_actor)
+    fwd_parents: dict = {start: None}
+    bwd_parents: dict = {target: None}
+
+    # heaps: (cost, actor_id)
+    heap_f = [(0.0, start)]
+    heap_b = [(0.0, target)]
+
+    settled_f: set = set()
+    settled_b: set = set()
+
+    best_total = INF
+    meeting_node: str | None = None
+
+    def relax_forward():
+        nonlocal best_total, meeting_node
+        cost, u = heapq.heappop(heap_f)
+        if u in settled_f:
+            return
+        settled_f.add(u)
+        for mid in actors.get(u, {}).get("movie_ids", []):
+            w = movies.get(mid, {}).get("box_office", 0.0)
+            for v in movies.get(mid, {}).get("actor_ids", []):
+                if v == u:
+                    continue
+                new_cost = cost + w
+                if new_cost < dist_f.get(v, INF):
+                    dist_f[v] = new_cost
+                    fwd_parents[v] = (mid, u)
+                    heapq.heappush(heap_f, (new_cost, v))
+                # Check if this creates a complete path
+                if v in dist_b:
+                    candidate = new_cost + dist_b[v]
+                    if candidate < best_total:
+                        best_total = candidate
+                        meeting_node = v
+
+    def relax_backward():
+        nonlocal best_total, meeting_node
+        cost, u = heapq.heappop(heap_b)
+        if u in settled_b:
+            return
+        settled_b.add(u)
+        for mid in actors.get(u, {}).get("movie_ids", []):
+            w = movies.get(mid, {}).get("box_office", 0.0)
+            for v in movies.get(mid, {}).get("actor_ids", []):
+                if v == u:
+                    continue
+                new_cost = cost + w
+                if new_cost < dist_b.get(v, INF):
+                    dist_b[v] = new_cost
+                    bwd_parents[v] = (mid, u)
+                    heapq.heappush(heap_b, (new_cost, v))
+                if v in dist_f:
+                    candidate = dist_f[v] + new_cost
+                    if candidate < best_total:
+                        best_total = candidate
+                        meeting_node = v
+
+    while heap_f or heap_b:
+        # Termination condition: minimum of both heaps exceeds best known path
+        top_f = heap_f[0][0] if heap_f else INF
+        top_b = heap_b[0][0] if heap_b else INF
+        if top_f + top_b >= best_total:
+            break
+
+        if top_f <= top_b:
+            if heap_f:
+                relax_forward()
+        else:
+            if heap_b:
+                relax_backward()
+
+    if meeting_node is None or best_total == INF:
+        return {"total_box_office": -1.0, "path": [], "is_successful": False}
+
+    path = _reconstruct_dijkstra_path(fwd_parents, bwd_parents, meeting_node, start, target)
+    return {"total_box_office": best_total, "path": path, "is_successful": True}
+
+
+# ---------------------------------------------------------------------------
+# 8. Score calculation – shortest path mode
+# ---------------------------------------------------------------------------
+
+def calculate_score_shortest(player_steps: int, optimal_steps: int) -> float:
+    """
+    Score for the shortest-path game mode.
+
+    score = 100 * optimal_steps / player_steps
+
+    Parameters
+    ----------
+    player_steps  : int  Number of (movie, actor) selections the player made.
+    optimal_steps : int  Optimal number of steps from the algorithm.
+
+    Returns
+    -------
+    float  Score as a percentage (0–100, can exceed 100 in theory only if
+           player somehow beats optimal, which shouldn't happen in practice).
+    """
+    if player_steps <= 0:
+        raise ValueError("player_steps must be a positive integer.")
+    if optimal_steps <= 0:
+        raise ValueError("optimal_steps must be a positive integer.")
+    return 100.0 * optimal_steps / player_steps
+
+
+# ---------------------------------------------------------------------------
+# 9. Score calculation – lowest box office mode
+# ---------------------------------------------------------------------------
+
+def calculate_score_boxoffice(player_sum: float, optimal_sum: float) -> float:
+    """
+    Score for the lowest-box-office game mode.
+
+    score = 100 * optimal_sum / player_sum
+
+    Parameters
+    ----------
+    player_sum  : float  Sum of box office sales for the player's chosen movies.
+    optimal_sum : float  Optimal (minimum) sum from the algorithm.
+
+    Returns
+    -------
+    float  Score as a percentage (capped at 100 when player matches optimal).
+    """
+    if player_sum <= 0:
+        raise ValueError("player_sum must be a positive number.")
+    if optimal_sum < 0:
+        raise ValueError("optimal_sum cannot be negative.")
+    return 100.0 * optimal_sum / player_sum
+
+
+# ---------------------------------------------------------------------------
+# 10. Generate a new game instance
+# ---------------------------------------------------------------------------
+
+def generate_game(game_mode: str, data: dict) -> dict:
+    """
+    Create a new game by selecting random start/target actors and pre-computing
+    the optimal path for the chosen game mode.
+
+    Parameters
+    ----------
+    game_mode : str
+        "shortest"   – minimise number of (movie, actor) steps.
+        "boxoffice"  – minimise total box office revenue of chosen movies.
+    data : dict
+        Game data from load_data() or build_and_save().
+
+    Returns
+    -------
+    dict with keys:
+        "game_mode"        : str
+        "start_actor_id"   : str
+        "start_actor_name" : str
+        "target_actor_id"  : str
+        "target_actor_name": str
+        "optimal_result"   : dict  (output of the relevant path algorithm)
+        "is_valid"         : bool  (False if no path exists between the pair)
+
+    Notes
+    -----
+    If no valid path is found the function retries with a new pair of actors
+    (up to 20 attempts) before giving up and setting is_valid = False.
+    """
+    SUPPORTED_MODES = {"shortest", "boxoffice"}
+    if game_mode not in SUPPORTED_MODES:
+        raise ValueError(f"game_mode must be one of {SUPPORTED_MODES}, got '{game_mode}'.")
+
+    MAX_ATTEMPTS = 20
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        start_id, target_id = get_random_actors(data)
+
+        if game_mode == "shortest":
+            result = calculate_shortest_path(start_id, target_id, data)
+            success = result["is_successful"]
+        else:  # "boxoffice"
+            result = calculate_lowest_boxoffice_path(start_id, target_id, data)
+            success = result["is_successful"]
+
+        if success:
+            return {
+                "game_mode": game_mode,
+                "start_actor_id": start_id,
+                "start_actor_name": data["actors"][start_id]["name"],
+                "target_actor_id": target_id,
+                "target_actor_name": data["actors"][target_id]["name"],
+                "optimal_result": result,
+                "is_valid": True,
+            }
+
+    # All attempts failed
+    return {
+        "game_mode": game_mode,
+        "start_actor_id": start_id,
+        "start_actor_name": data["actors"][start_id]["name"],
+        "target_actor_id": target_id,
+        "target_actor_name": data["actors"][target_id]["name"],
+        "optimal_result": result,
+        "is_valid": False,
+    }
