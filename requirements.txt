@@ -1,5 +1,5 @@
 pandas
 numpy
 sreamlit
-pylint
+pylint==4.0.4
 coverage
