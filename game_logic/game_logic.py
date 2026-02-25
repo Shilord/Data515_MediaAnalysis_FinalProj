@@ -22,7 +22,10 @@ import pandas as pd
 # 1. Build and save efficient data structures from parquet files
 # ---------------------------------------------------------------------------
 
-def build_and_save(
+# 16/15 local variables, mostly because of the nested loops and multiple dicts being built simultaneously. 
+# Could be refactored but it's not too bad and is clearer to keep it all in one function.
+# pylint: disable=too-many-locals
+def build_and_save( 
     movies_parquet: str,
     actors_parquet: str,
     output_path: str = "game_data.pkl",
@@ -52,8 +55,7 @@ def build_and_save(
 
     movies: dict = {}
     for _, row in movies_df.iterrows():
-        year = row["startYear"]
-        year_str = f" ({int(year)})" if pd.notna(year) else ""
+        year_str = f" ({int(row["startYear"])})" if pd.notna(row["startYear"]) else ""
         title = f"{row['originalTitle']}{year_str}"
 
         actor_ids = [aid.strip() for aid in str(row["personIds"]).split(",") if aid.strip()]
@@ -74,14 +76,14 @@ def build_and_save(
     movies = {mid: info for mid, info in movies.items() if mid not in removed_movies}
     # Remove references to filtered movies from actor_to_movies
     for actor_id in actor_to_movies:
-        actor_to_movies[actor_id] = [mid for mid in actor_to_movies[actor_id] if mid not in removed_movies]
+        actor_to_movies[actor_id] = [mid for mid in actor_to_movies[actor_id]
+                                     if mid not in removed_movies]
 
     actors: dict = {}
     for _, row in actors_df.iterrows():
-        nconst = row["nconst"]
-        actors[nconst] = {
+        actors[row["nconst"]] = {
             "name": row["primaryName"],
-            "movie_ids": actor_to_movies.get(nconst, []),
+            "movie_ids": actor_to_movies.get(row["nconst"], []),
         }
     # Remove actors with no associated movies
     actors = {nconst: info for nconst, info in actors.items() if info["movie_ids"]}
@@ -121,7 +123,6 @@ def load_data(path: str = "game_data.pkl") -> dict:
         data = pickle.load(f)
     return data
 
-
 # ---------------------------------------------------------------------------
 # 3. Select random starting and target actors
 # ---------------------------------------------------------------------------
@@ -144,7 +145,6 @@ def get_random_actors(data: dict) -> tuple[str, str]:
         raise ValueError("Need at least 2 actors in the dataset.")
     start, target = random.sample(actor_ids, 2)
     return start, target
-
 
 # ---------------------------------------------------------------------------
 # 4. Get all movies for an actor
@@ -172,7 +172,6 @@ def get_movies_for_actor(actor_id: str, data: dict) -> dict:
         if mid in movies_lookup
     }
 
-
 # ---------------------------------------------------------------------------
 # 5. Get all actors for a movie
 # ---------------------------------------------------------------------------
@@ -198,7 +197,6 @@ def get_actors_for_movie(movie_id: str, data: dict) -> dict:
         for aid in data["movies"][movie_id]["actor_ids"]
         if aid in actors_lookup
     }
-
 
 # ---------------------------------------------------------------------------
 # 6. Optimal shortest path – bidirectional BFS
@@ -310,7 +308,6 @@ def calculate_shortest_path(start: str, target: str, data: dict) -> dict:
                 return {"steps": len(path), "path": path, "is_successful": True}
 
     return {"steps": -1, "path": [], "is_successful": False}
-
 
 # ---------------------------------------------------------------------------
 # 7. Optimal lowest box-office path – bidirectional Dijkstra's
@@ -454,7 +451,6 @@ def calculate_lowest_boxoffice_path(start: str, target: str, data: dict) -> dict
     path = _reconstruct_dijkstra_path(fwd_parents, bwd_parents, meeting_node, start, target)
     return {"total_box_office": best_total, "path": path, "is_successful": True}
 
-
 # ---------------------------------------------------------------------------
 # 8. Score calculation – shortest path mode
 # ---------------------------------------------------------------------------
@@ -481,7 +477,6 @@ def calculate_score_shortest(player_steps: int, optimal_steps: int) -> float:
         raise ValueError("optimal_steps must be a positive integer.")
     return 100.0 * optimal_steps / player_steps
 
-
 # ---------------------------------------------------------------------------
 # 9. Score calculation – lowest box office mode
 # ---------------------------------------------------------------------------
@@ -506,7 +501,6 @@ def calculate_score_boxoffice(player_sum: float, optimal_sum: float) -> float:
     if optimal_sum < 0:
         raise ValueError("optimal_sum cannot be negative.")
     return 100.0 * optimal_sum / player_sum
-
 
 # ---------------------------------------------------------------------------
 # 10. Generate a new game instance
