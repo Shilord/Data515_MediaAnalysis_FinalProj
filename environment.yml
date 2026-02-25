@@ -1,4 +1,4 @@
-name: box_office
+name: reel_connections
 channels:
   - conda-forge
   - defaults
