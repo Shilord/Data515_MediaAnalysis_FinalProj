@@ -92,12 +92,12 @@ jobs:
           coverage report
           coverage lcov
 
-      # Next step: run pylint. Anything less than 10/10 will fail.
-      #            Once we've covered pylint in lecture, uncomment
-      #            the following lines.
-      # - name: Lint with pylint
-      #   run: |
-      #     pylint ???.py
+      # Linting
+      - name: Lint with pylint
+        run: |
+          pylint streamlit
+          pylint tests
+          pylint game_logic
 
       # Lastly: report code coverage to Coveralls.
       - name: Report code coverage to Coveralls
