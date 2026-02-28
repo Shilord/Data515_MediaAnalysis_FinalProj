@@ -567,7 +567,7 @@ def generate_game(game_mode: str, data: dict) -> dict:
         raise ValueError(f"game_mode must be one of {supported_modes}, got '{game_mode}'.")
 
     max_attempts = 20
-    for _ in range(1, max_attempts + 1):
+    for attempt in range(1, max_attempts + 1):
         start_id, target_id = get_random_actors(data)
 
         if game_mode == "shortest":
@@ -580,6 +580,7 @@ def generate_game(game_mode: str, data: dict) -> dict:
             raise ValueError(f"Unsupported game mode: {game_mode}")
 
         if success:
+            # print(f"Number of attempts: {attempt}") # For debugging
             return {
                 "game_mode": game_mode,
                 "start_actor_id": start_id,
@@ -603,3 +604,26 @@ def generate_game(game_mode: str, data: dict) -> dict:
         "optimal_path": result,
         "is_valid": False,
     }
+
+# ---------------------------------------------------------------------------
+# 11. Check if player won
+# ---------------------------------------------------------------------------
+
+def check_player_solution(player_selection: str, target_actor_id: str) -> bool:
+    """
+    Check if the player's actor selection matches the target actor.
+
+    Parameters
+    ----------
+    player_selection : str
+        The actor ID selected by the player.
+    target_actor_id : str
+        The ID of the target actor in the current game.
+
+    Returns
+    -------
+    bool       True if the player's selection matches the target actor (win), False otherwise.
+    """
+    if player_selection == target_actor_id:
+        return True
+    return False
