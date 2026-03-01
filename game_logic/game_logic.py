@@ -347,12 +347,15 @@ def calculate_shortest_path(start: str, target: str, data: dict) -> dict:
         # Expand whichever direction is smaller
         if forward_queue and (not backward_queue or len(forward_queue) <= len(backward_queue)):
             if forward_queue:
-                meeting = expand_forward(forward_queue, forward_visited, forward_parents, backward_visited)
+                meeting = expand_forward(forward_queue, forward_visited,
+                                         forward_parents, backward_visited)
                 if meeting is not None:
-                    path = _reconstruct_path(forward_parents, backward_parents, meeting, start, target)
+                    path = _reconstruct_path(forward_parents, backward_parents,
+                                             meeting, start, target)
                     return {"steps": len(path), "path": path, "is_successful": True}
         if backward_queue:
-            meeting = expand_backward(backward_queue, backward_visited, backward_parents, forward_visited)
+            meeting = expand_backward(backward_queue, backward_visited,
+                                      backward_parents, forward_visited)
             if meeting is not None:
                 path = _reconstruct_path(forward_parents, backward_parents, meeting, start, target)
                 return {"steps": len(path), "path": path, "is_successful": True}
@@ -386,7 +389,7 @@ def calculate_lowest_boxoffice_path(start: str, target: str, data: dict) -> dict
     dict with keys:
         "total_box_office" : float - sum of box office sales along optimal path.
         "path"             : list  - ordered list of (movie_id, actor_id) tuples.
-        "is_successful"    : bool  - True if a path exists, False if no path exists between the actors.
+        "is_successful"    : bool  - True if a path exists, false otherwise.
     """
     if start == target:
         return {"total_box_office": 0.0, "path": [], "is_successful": True}
@@ -567,7 +570,7 @@ def generate_game(game_mode: str, data: dict) -> dict:
         raise ValueError(f"game_mode must be one of {supported_modes}, got '{game_mode}'.")
 
     max_attempts = 20
-    for attempt in range(1, max_attempts + 1):
+    for _ in range(1, max_attempts + 1):
         start_id, target_id = get_random_actors(data)
 
         if game_mode == "shortest":
@@ -580,7 +583,7 @@ def generate_game(game_mode: str, data: dict) -> dict:
             raise ValueError(f"Unsupported game mode: {game_mode}")
 
         if success:
-            # print(f"Number of attempts: {attempt}") # For debugging
+            # print(f"Number of attempts: {_}") # For debugging
             return {
                 "game_mode": game_mode,
                 "start_actor_id": start_id,
