@@ -67,7 +67,8 @@ def build_and_save(
 
         movies[row["tconst"]] = {
             "title": title,
-            "box_office": float(row["box_office_x"]) if row["box_office_x"] is not None else 0.0,
+            "box_office":
+            float(row["adjusted_box_office"]) if row["adjusted_box_office"] is not None else 0.0,
             "actor_ids": actor_ids,
         }
 
