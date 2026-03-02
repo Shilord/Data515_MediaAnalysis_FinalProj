@@ -8,6 +8,9 @@
 
 **Questions of Interest:** Can you identify and categorize movies and television series based on their metadata alone and what kinds of connections can you find between seemingly unrelated pieces of media?
 
-**Project Output:** An interactive web app that allows you to play game(s) involving movies and actors. The first idea is a connection based game similar to the Wiki Game (https://www.thewikigame.com) where you are required to jump from a movie to a different one by using shared metadata. The second is a Wordle (https://www.nytimes.com/games/wordle/index.html) inspired game where you try and guess an entry based on its metadata, similar to this Pokemon guessing game (https://squirdle.fireblend.com/).
+**Project Output:** An interactive web app that allows you to play game(s) involving movies and actors. Specifically, a connection based game similar to the Wiki Game (https://www.thewikigame.com) where you are required to jump from a movie to a different one by using shared metadata, inspired by the Six Degrees of Kevin Bacon.
 
-**Data Sources:** IMDb has many datasets for their catalogue and their metadata, Netflix also has its own data on corresponding entries. 
+**Data Sources:** 
+- IMDb's Non-Commercial Datasets for movie and actor lists: https://developer.imdb.com/non-commercial-datasets/
+- TMDb API for additional information not found on the IMDb datasets: https://developer.themoviedb.org/docs/getting-started
+- Inflation Data provided by the US Bureau of Labor Statistics: https://data.bls.gov/timeseries/CUUR0000SA0L1E?output_view=pct_12mths 

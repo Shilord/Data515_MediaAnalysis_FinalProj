@@ -81,7 +81,7 @@ jobs:
         run: |
           conda install --yes coverage
           conda install --yes -c conda-forge gdown
-      
+
       # If there are any other steps in order for your tests to
       # run successfully, you can add those steps here!
 
@@ -95,9 +95,9 @@ jobs:
       # Linting
       - name: Lint with pylint
         run: |
-          pylint streamlit
-          pylint tests
-          pylint game_logic
+          pylint --recursive=y streamlit/
+          pylint --recursive=y tests/
+          pylint --recursive=y game_logic/
 
       # Lastly: report code coverage to Coveralls.
       - name: Report code coverage to Coveralls
