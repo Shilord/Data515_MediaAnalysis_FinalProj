@@ -1,6 +1,5 @@
 import streamlit as st
 
-
 def render(name, label=None):
     box = st.container()
     with box:

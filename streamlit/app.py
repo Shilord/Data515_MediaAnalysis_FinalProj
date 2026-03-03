@@ -2,7 +2,6 @@ import streamlit as st
 
 from core.state import init_state
 from pages.home import render as render_home
-from pages.config_challenge import render as render_config_challenge
 from pages.game import render as render_game
 from pages.game_challenge import render as render_game_challenge
 from pages.result import render as render_result
