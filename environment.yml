@@ -1,4 +1,4 @@
-name: reel_connections
+name: reel-connections
 channels:
   - conda-forge
   - defaults

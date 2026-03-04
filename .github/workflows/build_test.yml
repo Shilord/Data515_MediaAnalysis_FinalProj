@@ -61,7 +61,7 @@ jobs:
         uses: conda-incubator/setup-miniconda@v3
         with:
           # Use the environment name from your environment.yml file
-          activate-environment: ci_example
+          activate-environment: reel-connections
           # The name of the environment file you want conda to use
           environment-file: environment.yml
           # Whether you want conda to automatically update the conda
