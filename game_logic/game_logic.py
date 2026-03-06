@@ -94,6 +94,11 @@ def build_and_save(
     # Remove actors with no associated movies
     actors = {nconst: info for nconst, info in actors.items() if info["movie_ids"]}
 
+    # Remove actor_ids from movies that don't exist in the actors dict
+    for movie_id in movies:
+        movies[movie_id]["actor_ids"] = [
+            aid for aid in movies[movie_id]["actor_ids"] if aid in actors]
+
     data = {"movies": movies, "actors": actors}
 
     with open(output_path, "wb") as f:
