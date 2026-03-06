@@ -253,12 +253,16 @@ def get_actors_for_movie(movie_id: str, data: dict) -> dict:
 # 6. Optimal shortest path – bidirectional BFS
 # ---------------------------------------------------------------------------
 
+# Could bundle positional arguments as single dict, but would make the function calls
+# more annoying to write. Going to supress the 1 over the pylint recommended # of arguments.
+# pylint: disable=too-many-arguments, too-many-positional-arguments
 def _reconstruct_path(
     forward_parents: dict,
     backward_parents: dict,
     meeting_actor: str,
     start: str,
     target: str,
+    data: dict
 ) -> list:
     """
     Reconstruct the full ordered path of (movie_id, actor_id) pairs from the
@@ -272,7 +276,7 @@ def _reconstruct_path(
     node = meeting_actor
     while node != start:
         movie_id, parent = forward_parents[node]
-        forward_steps.append((movie_id, node))
+        forward_steps.append((data["movies"][movie_id]["title"], data["actors"][node]["name"]))
         node = parent
     forward_steps.reverse()
 
@@ -281,7 +285,7 @@ def _reconstruct_path(
     node = meeting_actor
     while node != target:
         movie_id, child = backward_parents[node]
-        backward_steps.append((movie_id, child))
+        backward_steps.append((data["movies"][movie_id]["title"], data["actors"][child]["name"]))
         node = child
 
     return forward_steps + backward_steps
@@ -352,13 +356,14 @@ def calculate_shortest_path(start: str, target: str, data: dict) -> dict:
                                          forward_parents, backward_visited)
                 if meeting is not None:
                     path = _reconstruct_path(forward_parents, backward_parents,
-                                             meeting, start, target)
+                                             meeting, start, target, data)
                     return {"steps": len(path), "path": path, "is_successful": True}
         if backward_queue:
             meeting = expand_backward(backward_queue, backward_visited,
                                       backward_parents, forward_visited)
             if meeting is not None:
-                path = _reconstruct_path(forward_parents, backward_parents, meeting, start, target)
+                path = _reconstruct_path(forward_parents, backward_parents,
+                                         meeting, start, target, data)
                 return {"steps": len(path), "path": path, "is_successful": True}
 
     return {"steps": -1, "path": [], "is_successful": False}
@@ -477,7 +482,7 @@ def calculate_lowest_boxoffice_path(start: str, target: str, data: dict) -> dict
     if meeting_node is None or best_total == float("inf"):
         return {"total_box_office": -1.0, "path": [], "is_successful": False}
 
-    path = _reconstruct_path(fwd_parents, bwd_parents, meeting_node, start, target)
+    path = _reconstruct_path(fwd_parents, bwd_parents, meeting_node, start, target, data)
     return {"total_box_office": best_total, "path": path, "is_successful": True}
 
 # ---------------------------------------------------------------------------
