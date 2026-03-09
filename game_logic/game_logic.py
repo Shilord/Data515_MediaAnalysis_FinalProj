@@ -56,25 +56,25 @@ def build_and_save(
     actors_df = pd.read_parquet(actors_parquet)
 
     # Build movie dict and simultaneously collect movie_ids per actor
-    actor_to_movies: dict = {}  # nconst -> [tconst, ...]
+    actor_to_movies: dict = {}
 
     movies: dict = {}
     for _, row in movies_df.iterrows():
-        year_str = f" ({int(row["startYear"])})" if pd.notna(row["startYear"]) else ""
-        title = f"{row['originalTitle']}{year_str}"
+        year_str = f" ({int(row["year"])})" if pd.notna(row["year"]) else ""
+        title = f"{row['original_title']}{year_str}"
 
-        actor_ids = [aid.strip() for aid in str(row["personIds"]).split(",") if aid.strip()]
+        actor_ids = [aid.strip() for aid in str(row["actors"]).split(",") if aid.strip()]
 
-        movies[row["tconst"]] = {
+        movies[row["movie_id"]] = {
             "title": title,
             "box_office":
-            float(row["adjusted_box_office"]) if row["adjusted_box_office"] is not None else 0.0,
+            float(row["adjusted_revenue"]) if row["adjusted_revenue"] is not None else 0.0,
             "actor_ids": actor_ids,
         }
 
         # Invert the relationship: track which movies each actor appears in
         for actor_id in actor_ids:
-            actor_to_movies.setdefault(actor_id, []).append(row["tconst"])
+            actor_to_movies.setdefault(actor_id, []).append(row["movie_id"])
 
     # Remove this chunk to include all movies even with no box office sales info (0 sales)
     # Remove movies with zero or missing box office values
@@ -87,12 +87,12 @@ def build_and_save(
 
     actors: dict = {}
     for _, row in actors_df.iterrows():
-        actors[row["nconst"]] = {
-            "name": row["primaryName"],
-            "movie_ids": actor_to_movies.get(row["nconst"], []),
+        actors[str(row["tmdb_id"])] = {
+            "name": row["name"],
+            "movie_ids": actor_to_movies.get(str(row["tmdb_id"]), []),
         }
     # Remove actors with no associated movies
-    actors = {nconst: info for nconst, info in actors.items() if info["movie_ids"]}
+    actors = {tmdb_id: info for tmdb_id, info in actors.items() if info["movie_ids"]}
 
     # Remove actor_ids from movies that don't exist in the actors dict
     for movie_id in movies:
