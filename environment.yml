@@ -4,7 +4,7 @@ channels:
   - defaults
 dependencies:
   - python=3.13
-  - jupyter=1.0
+  - jupyter
   - pip
   - pip:
     - -r requirements.txt

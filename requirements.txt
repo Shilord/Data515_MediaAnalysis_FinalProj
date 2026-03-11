@@ -1,5 +1,6 @@
-pandas==2.2
-numpy==2.1.3
-streamlit==1.45
-pylint==3.3
-coverage==7.13
+pandas
+numpy
+streamlit
+pylint
+coverage
+pyarrow==23.0.1
