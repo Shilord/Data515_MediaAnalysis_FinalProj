@@ -1,10 +1,16 @@
 name: reel-connections
+
 channels:
   - conda-forge
   - defaults
+
 dependencies:
-  - python=3.9
-  - jupyter=1.0
+  - python=3.10
   - pip
+  - pandas
+  - numpy
+  - pylint
+  - coverage
+  - gdown
   - pip:
-    - -r requirements.txt
+      - streamlit
