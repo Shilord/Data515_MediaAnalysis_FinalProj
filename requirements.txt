@@ -3,3 +3,4 @@ numpy
 streamlit
 pylint
 coverage
+pyarrow==23.0.1
