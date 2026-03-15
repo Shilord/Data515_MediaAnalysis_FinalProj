@@ -61,7 +61,7 @@ jobs:
         uses: conda-incubator/setup-miniconda@v3
         with:
           # Use the environment name from your environment.yml file
-          activate-environment: ci_example
+          activate-environment: reel-connections
           # The name of the environment file you want conda to use
           environment-file: environment.yml
           # Whether you want conda to automatically update the conda
@@ -81,7 +81,7 @@ jobs:
         run: |
           conda install --yes coverage
           conda install --yes -c conda-forge gdown
-      
+
       # If there are any other steps in order for your tests to
       # run successfully, you can add those steps here!
 
@@ -92,12 +92,12 @@ jobs:
           coverage report
           coverage lcov
 
-      # Next step: run pylint. Anything less than 10/10 will fail.
-      #            Once we've covered pylint in lecture, uncomment
-      #            the following lines.
-      # - name: Lint with pylint
-      #   run: |
-      #     pylint ???.py
+      # Linting
+      - name: Lint with pylint
+        run: |
+          pylint --recursive=y streamlit/
+          pylint --recursive=y tests/
+          pylint --recursive=y game_logic/
 
       # Lastly: report code coverage to Coveralls.
       - name: Report code coverage to Coveralls
