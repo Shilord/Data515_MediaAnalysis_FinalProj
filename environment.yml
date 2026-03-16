@@ -1,9 +1,10 @@
-name: reel_connections
+name: reel-connections
 channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.13.5
+  - python=3.13
+  - jupyter
   - pip
   - pip:
     - -r requirements.txt
