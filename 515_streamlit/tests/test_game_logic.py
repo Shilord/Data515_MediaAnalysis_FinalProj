@@ -84,7 +84,7 @@ class TestLoadData(unittest.TestCase):
         )
         pickle.dump(SAMPLE_DATA, self.tmp)
         self.tmp.close()
-        
+
     def tearDown(self):
         """Remove the temp file after each test."""
         os.unlink(self.tmp.name)
