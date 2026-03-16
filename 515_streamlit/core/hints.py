@@ -1,10 +1,7 @@
-"""Provides real-time hint generation for both game modes."""
-
 from core.game_logic import (
     calculate_shortest_path,
     calculate_lowest_boxoffice_path,
 )
-
 
 def get_realtime_hint(mode, current_actor, target_actor, data):
     """
@@ -25,11 +22,14 @@ def get_realtime_hint(mode, current_actor, target_actor, data):
     -------
     (movie_title, actor_name) or (None, None)
     """
+
     # Choose correct algorithm
     if mode == "normal":
         result = calculate_shortest_path(current_actor, target_actor, data)
+
     elif mode == "challenge":
         result = calculate_lowest_boxoffice_path(current_actor, target_actor, data)
+
     else:
         return None, None
 

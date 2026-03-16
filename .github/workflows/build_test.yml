@@ -87,25 +87,24 @@ jobs:
 
       # Next step: run the unit tests with code coverage.
       - name: Unit tests
-        working-directory: 515_streamlit
         run: |
-          coverage run -m unittest discover -s tests -t tests
+          coverage run -m unittest discover
           coverage report
           coverage lcov
 
       # Linting
       - name: Lint with pylint
-        working-directory: 515_streamlit
         run: |
-          pylint --recursive=y core/
+          pylint --recursive=y streamlit/
           pylint --recursive=y tests/
+          pylint --recursive=y game_logic/
 
       # Lastly: report code coverage to Coveralls.
       - name: Report code coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path-to-lcov: 515_streamlit/coverage.lcov
+          path-to-lcov: coverage.lcov
           # The following two options are needed for "parallel"
           # runs - ie if you have a matrix of python versions.
           # This holds off on reporting code coverage to
