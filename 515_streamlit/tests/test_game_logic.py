@@ -1,7 +1,7 @@
 """
 test_game_logic.py
 ==================
-Unit tests for core/game_logic.py functions.
+Unit tests for core/test_game_logic.py functions.
 
 """
 
