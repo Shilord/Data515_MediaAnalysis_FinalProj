@@ -1,8 +1,12 @@
+"""Manages Streamlit session state for the Reel Connections game."""
+
 import streamlit as st
-from core.data_loader import get_game_data  
+from core.data_loader import get_game_data
 from core.game_logic import generate_game
 
+
 def init_state():
+    """Initialise all session state keys if they don't already exist."""
     # -----------------------------
     # Routing / global app state
     # -----------------------------
@@ -52,8 +56,9 @@ def init_state():
     if "message" not in st.session_state:
         st.session_state.message = ""
 
+
 def reset_game():
-    # Reset per-game state (does not clear loaded data)
+    """Reset per-game state without clearing the loaded dataset."""
     st.session_state.start_actor = None
     st.session_state.end_actor = None
     st.session_state.current_actor = None
@@ -62,15 +67,18 @@ def reset_game():
     st.session_state.history = []
     st.session_state.game_over = False
     st.session_state.message = ""
-    st.session_state.current_game = None  # Also clear the generated game object
+    st.session_state.current_game = None
+
 
 def go_home():
-    # Return to the home view and clear any active game
+    """Return to the home view and clear any active game."""
     st.session_state.current_view = "home"
     st.session_state.mode = None
     reset_game()
 
+
 def start_normal_mode():
+    """Generate a shortest-path game and transition to the game view."""
     reset_game()
 
     game = generate_game(
@@ -84,14 +92,14 @@ def start_normal_mode():
 
     st.session_state.mode = "normal"
     st.session_state.current_game = game
-
     st.session_state.start_actor = game["start_actor_id"]
     st.session_state.end_actor = game["target_actor_id"]
     st.session_state.current_actor = game["start_actor_id"]
-
     st.session_state.current_view = "game"
 
+
 def start_challenge_mode():
+    """Generate a lowest box-office game and transition to the challenge view."""
     reset_game()
 
     game = generate_game(
@@ -105,15 +113,14 @@ def start_challenge_mode():
 
     st.session_state.mode = "challenge"
     st.session_state.current_game = game
-
     st.session_state.start_actor = game["start_actor_id"]
     st.session_state.end_actor = game["target_actor_id"]
     st.session_state.current_actor = game["start_actor_id"]
-
     st.session_state.current_view = "game_challenge"
 
+
 def submit_step(movie_name, next_actor, movie_boxoffice=0):
-    # Record a player step and advance the current actor
+    """Record a player step, advance the current actor, and check the win condition."""
     st.session_state.history.append((st.session_state.current_actor, movie_name, next_actor))
     st.session_state.current_actor = next_actor
 
@@ -129,8 +136,9 @@ def submit_step(movie_name, next_actor, movie_boxoffice=0):
         st.session_state.current_view = "result"
         st.session_state.message = "🎉 You connected to the target actor!"
 
+
 def end_game_with_fail(reason=""):
-    # Force-end the game and show the result page with a message
+    """Force-end the game and display a message on the result page."""
     st.session_state.game_over = True
     st.session_state.current_view = "result"
     st.session_state.message = reason or "Game ended"
