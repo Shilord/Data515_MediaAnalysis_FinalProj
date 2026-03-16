@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "reel-connections"
+version = "1.0.0"
+description = "An interactive Six Degrees of Kevin Bacon game using IMDb data."
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+
+dependencies = [
+    "pandas",
+    "numpy",
+    "streamlit",
+    "pyarrow==23.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pylint",
+    "coverage",
+]
+
+[tool.setuptools.packages.find]
+where = ["515_streamlit"]
+
+[tool.coverage.run]
+source = ["515_streamlit/core"]
+
+[tool.coverage.report]
+show_missing = true

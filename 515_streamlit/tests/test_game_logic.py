@@ -16,6 +16,7 @@ import unittest
 
 from core.game_logic import (
     _reconstruct_path,
+    build_and_save,
     calculate_lowest_boxoffice_path,
     calculate_score_boxoffice,
     calculate_score_shortest,
@@ -586,6 +587,336 @@ class TestIntegration(unittest.TestCase):
         result = calculate_shortest_path("actor_A", "actor_C", SAMPLE_DATA)
         for movie_id, _ in result["path"]:
             self.assertIn(movie_id, SAMPLE_DATA["movies"])
+
+
+# ===========================================================================
+# build_and_save helpers
+# ===========================================================================
+
+def _write_parquets(movies_rows, actors_rows, tmp_dir):
+    """
+    Write movies and actors DataFrames to parquet files.
+
+    Parameters
+    ----------
+    movies_rows : list of dict
+        Each dict must have: tconst, originalTitle, startYear,
+        adjusted_box_office, personIds.
+    actors_rows : list of dict
+        Each dict must have: nconst, primaryName.
+    tmp_dir : str
+        Directory to write the parquet files into.
+
+    Returns
+    -------
+    (movies_path, actors_path) : tuple of str
+    """
+    import pandas as pd  # pylint: disable=import-outside-toplevel
+    movies_path = os.path.join(tmp_dir, "movies.parquet")
+    actors_path = os.path.join(tmp_dir, "actors.parquet")
+    pd.DataFrame(movies_rows).to_parquet(movies_path, index=False)
+    pd.DataFrame(actors_rows).to_parquet(actors_path, index=False)
+    return movies_path, actors_path
+
+
+_MOVIES_ROWS = [
+    {
+        "tconst": "tt0001",
+        "originalTitle": "Alpha Movie",
+        "startYear": 2000.0,
+        "adjusted_box_office": 100.0,
+        "personIds": "nm0001, nm0002",
+    },
+    {
+        "tconst": "tt0002",
+        "originalTitle": "Beta Movie",
+        "startYear": 2001.0,
+        "adjusted_box_office": 200.0,
+        "personIds": "nm0002, nm0003",
+    },
+]
+
+_ACTORS_ROWS = [
+    {"nconst": "nm0001", "primaryName": "Alice"},
+    {"nconst": "nm0002", "primaryName": "Bob"},
+    {"nconst": "nm0003", "primaryName": "Carol"},
+]
+
+
+# ===========================================================================
+# build_and_save
+# ===========================================================================
+
+class TestBuildAndSaveReturnStructure(unittest.TestCase):
+    """Tests that the returned dict has the correct top-level structure."""
+
+    def setUp(self):
+        """Create temp directory and write parquet fixtures."""
+        self.tmp_dir = tempfile.mkdtemp()
+        self.movies_path, self.actors_path = _write_parquets(
+            _MOVIES_ROWS, _ACTORS_ROWS, self.tmp_dir
+        )
+        self.output_path = os.path.join(self.tmp_dir, "game_data.pkl")
+        self.data = build_and_save(self.movies_path, self.actors_path, self.output_path)
+
+    def test_returns_dict(self):
+        """Return value should be a dict."""
+        self.assertIsInstance(self.data, dict)
+
+    def test_has_movies_key(self):
+        """Returned dict should contain a 'movies' key."""
+        self.assertIn("movies", self.data)
+
+    def test_has_actors_key(self):
+        """Returned dict should contain an 'actors' key."""
+        self.assertIn("actors", self.data)
+
+
+class TestBuildAndSavePickleFile(unittest.TestCase):
+    """Tests that the pickle file is written correctly."""
+
+    def setUp(self):
+        """Create temp directory and write parquet fixtures."""
+        self.tmp_dir = tempfile.mkdtemp()
+        self.movies_path, self.actors_path = _write_parquets(
+            _MOVIES_ROWS, _ACTORS_ROWS, self.tmp_dir
+        )
+        self.output_path = os.path.join(self.tmp_dir, "game_data.pkl")
+        self.data = build_and_save(self.movies_path, self.actors_path, self.output_path)
+
+    def test_pickle_file_is_created(self):
+        """A pickle file should exist at the specified output path."""
+        self.assertTrue(os.path.exists(self.output_path))
+
+    def test_pickle_file_contains_same_data(self):
+        """Loading the pickle file should return the same data as the return value."""
+        with open(self.output_path, "rb") as f:
+            loaded = pickle.load(f)
+        self.assertEqual(loaded, self.data)
+
+    def test_default_output_path(self):
+        """When no output_path is given, game_data.pkl should be written to cwd."""
+        original_dir = os.getcwd()
+        try:
+            os.chdir(self.tmp_dir)
+            build_and_save(self.movies_path, self.actors_path)
+            self.assertTrue(os.path.exists("game_data.pkl"))
+        finally:
+            os.chdir(original_dir)
+
+
+class TestBuildAndSaveMovies(unittest.TestCase):
+    """Tests for the movies dict built by build_and_save."""
+
+    def setUp(self):
+        """Create temp directory and write parquet fixtures."""
+        self.tmp_dir = tempfile.mkdtemp()
+        self.movies_path, self.actors_path = _write_parquets(
+            _MOVIES_ROWS, _ACTORS_ROWS, self.tmp_dir
+        )
+        self.output_path = os.path.join(self.tmp_dir, "game_data.pkl")
+        self.data = build_and_save(self.movies_path, self.actors_path, self.output_path)
+
+    def test_movie_ids_present(self):
+        """Both movie IDs from the parquet should appear in the result."""
+        self.assertIn("tt0001", self.data["movies"])
+        self.assertIn("tt0002", self.data["movies"])
+
+    def test_movie_title_includes_year(self):
+        """Title should be formatted as 'Original Title (year)'."""
+        self.assertEqual(self.data["movies"]["tt0001"]["title"], "Alpha Movie (2000)")
+
+    def test_movie_box_office_is_float(self):
+        """box_office value should be a float."""
+        self.assertIsInstance(self.data["movies"]["tt0001"]["box_office"], float)
+
+    def test_movie_box_office_value(self):
+        """box_office should match the adjusted_box_office from the parquet."""
+        self.assertEqual(self.data["movies"]["tt0001"]["box_office"], 100.0)
+
+    def test_movie_actor_ids_parsed(self):
+        """actor_ids should be a list parsed from the comma-separated personIds."""
+        self.assertEqual(
+            sorted(self.data["movies"]["tt0001"]["actor_ids"]),
+            ["nm0001", "nm0002"]
+        )
+
+    def test_movie_actor_ids_whitespace_stripped(self):
+        """Whitespace around actor IDs in personIds should be stripped."""
+        for actor_id in self.data["movies"]["tt0001"]["actor_ids"]:
+            self.assertEqual(actor_id, actor_id.strip())
+
+    def test_movie_with_no_year(self):
+        """A movie with no startYear should have a title without a year suffix."""
+        rows = [{
+            "tconst": "tt0099",
+            "originalTitle": "No Year Movie",
+            "startYear": None,
+            "adjusted_box_office": 50.0,
+            "personIds": "nm0001",
+        }]
+        movies_path, actors_path = _write_parquets(rows, _ACTORS_ROWS, self.tmp_dir)
+        data = build_and_save(
+            movies_path, actors_path, os.path.join(self.tmp_dir, "no_year.pkl")
+        )
+        self.assertEqual(data["movies"]["tt0099"]["title"], "No Year Movie")
+
+    def test_zero_box_office_movie_excluded(self):
+        """Movies with adjusted_box_office of 0.0 should be filtered out."""
+        rows = [{
+            "tconst": "tt0010",
+            "originalTitle": "Zero Movie",
+            "startYear": 2005.0,
+            "adjusted_box_office": 0.0,
+            "personIds": "nm0001",
+        }]
+        movies_path, actors_path = _write_parquets(rows, _ACTORS_ROWS, self.tmp_dir)
+        data = build_and_save(
+            movies_path, actors_path, os.path.join(self.tmp_dir, "zero_bo.pkl")
+        )
+        self.assertNotIn("tt0010", data["movies"])
+
+    def test_none_box_office_excluded(self):
+        """Movies with None adjusted_box_office should be treated as 0.0 and excluded."""
+        rows = [{
+            "tconst": "tt0011",
+            "originalTitle": "None BO Movie",
+            "startYear": 2005.0,
+            "adjusted_box_office": None,
+            "personIds": "nm0001",
+        }]
+        movies_path, actors_path = _write_parquets(rows, _ACTORS_ROWS, self.tmp_dir)
+        data = build_and_save(
+            movies_path, actors_path, os.path.join(self.tmp_dir, "none_bo.pkl")
+        )
+        self.assertNotIn("tt0011", data["movies"])
+
+
+class TestBuildAndSaveActors(unittest.TestCase):
+    """Tests for the actors dict built by build_and_save."""
+
+    def setUp(self):
+        """Create temp directory and write parquet fixtures."""
+        self.tmp_dir = tempfile.mkdtemp()
+        self.movies_path, self.actors_path = _write_parquets(
+            _MOVIES_ROWS, _ACTORS_ROWS, self.tmp_dir
+        )
+        self.output_path = os.path.join(self.tmp_dir, "game_data.pkl")
+        self.data = build_and_save(self.movies_path, self.actors_path, self.output_path)
+
+    def test_actor_ids_present(self):
+        """All three actor IDs should appear in the result."""
+        for actor_id in ("nm0001", "nm0002", "nm0003"):
+            self.assertIn(actor_id, self.data["actors"])
+
+    def test_actor_name_correct(self):
+        """Actor name should match primaryName from the parquet."""
+        self.assertEqual(self.data["actors"]["nm0001"]["name"], "Alice")
+
+    def test_actor_movie_ids_is_list(self):
+        """movie_ids for each actor should be a list."""
+        self.assertIsInstance(self.data["actors"]["nm0001"]["movie_ids"], list)
+
+    def test_actor_single_movie(self):
+        """nm0001 appears only in tt0001."""
+        self.assertEqual(self.data["actors"]["nm0001"]["movie_ids"], ["tt0001"])
+
+    def test_actor_in_multiple_movies(self):
+        """nm0002 appears in both tt0001 and tt0002."""
+        self.assertCountEqual(
+            self.data["actors"]["nm0002"]["movie_ids"],
+            ["tt0001", "tt0002"]
+        )
+
+    def test_actor_with_no_movies_excluded(self):
+        """Actors not linked to any movie should be excluded from the result."""
+        actors_with_extra = _ACTORS_ROWS + [{"nconst": "nm9999", "primaryName": "Nobody"}]
+        movies_path, actors_path = _write_parquets(
+            _MOVIES_ROWS, actors_with_extra, self.tmp_dir
+        )
+        data = build_and_save(
+            movies_path, actors_path, os.path.join(self.tmp_dir, "no_movies.pkl")
+        )
+        self.assertNotIn("nm9999", data["actors"])
+
+    def test_actor_excluded_when_only_movie_has_zero_box_office(self):
+        """An actor whose only movie has zero box office should be excluded."""
+        rows = [{
+            "tconst": "tt0020",
+            "originalTitle": "Flop",
+            "startYear": 2000.0,
+            "adjusted_box_office": 0.0,
+            "personIds": "nm9998",
+        }]
+        actors = [{"nconst": "nm9998", "primaryName": "Flop Actor"}]
+        movies_path, actors_path = _write_parquets(rows, actors, self.tmp_dir)
+        data = build_and_save(
+            movies_path, actors_path, os.path.join(self.tmp_dir, "flop.pkl")
+        )
+        self.assertNotIn("nm9998", data["actors"])
+
+
+class TestBuildAndSaveEdgeCases(unittest.TestCase):
+    """Edge case tests for build_and_save."""
+
+    def setUp(self):
+        """Create a temp directory for output files."""
+        self.tmp_dir = tempfile.mkdtemp()
+
+    def test_empty_parquets_produce_empty_dicts(self):
+        """Empty input parquets should produce empty movies and actors dicts."""
+        movies_path, actors_path = _write_parquets([], [], self.tmp_dir)
+        data = build_and_save(
+            movies_path, actors_path, os.path.join(self.tmp_dir, "empty.pkl")
+        )
+        self.assertEqual(data["movies"], {})
+        self.assertEqual(data["actors"], {})
+
+    def test_single_movie_single_actor(self):
+        """A single movie with a single actor should produce one movie and one actor."""
+        rows = [{
+            "tconst": "tt0001",
+            "originalTitle": "Solo",
+            "startYear": 1999.0,
+            "adjusted_box_office": 10.0,
+            "personIds": "nm0001",
+        }]
+        actors = [{"nconst": "nm0001", "primaryName": "Solo Actor"}]
+        movies_path, actors_path = _write_parquets(rows, actors, self.tmp_dir)
+        data = build_and_save(
+            movies_path, actors_path, os.path.join(self.tmp_dir, "solo.pkl")
+        )
+        self.assertEqual(len(data["movies"]), 1)
+        self.assertEqual(len(data["actors"]), 1)
+
+    def test_all_movies_zero_box_office_produces_empty_result(self):
+        """If every movie has zero box office, both dicts should be empty."""
+        rows = [
+            {
+                "tconst": "tt0001",
+                "originalTitle": "Flop One",
+                "startYear": 2000.0,
+                "adjusted_box_office": 0.0,
+                "personIds": "nm0001",
+            },
+            {
+                "tconst": "tt0002",
+                "originalTitle": "Flop Two",
+                "startYear": 2001.0,
+                "adjusted_box_office": 0.0,
+                "personIds": "nm0002",
+            },
+        ]
+        actors = [
+            {"nconst": "nm0001", "primaryName": "Alice"},
+            {"nconst": "nm0002", "primaryName": "Bob"},
+        ]
+        movies_path, actors_path = _write_parquets(rows, actors, self.tmp_dir)
+        data = build_and_save(
+            movies_path, actors_path, os.path.join(self.tmp_dir, "all_flop.pkl")
+        )
+        self.assertEqual(data["movies"], {})
+        self.assertEqual(data["actors"], {})
 
 
 if __name__ == "__main__":
