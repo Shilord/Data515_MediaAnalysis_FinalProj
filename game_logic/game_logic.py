@@ -56,25 +56,25 @@ def build_and_save(
     actors_df = pd.read_parquet(actors_parquet)
 
     # Build movie dict and simultaneously collect movie_ids per actor
-    actor_to_movies: dict = {}  # nconst -> [tconst, ...]
+    actor_to_movies: dict = {}
 
     movies: dict = {}
     for _, row in movies_df.iterrows():
-        year_str = f" ({int(row["startYear"])})" if pd.notna(row["startYear"]) else ""
-        title = f"{row['originalTitle']}{year_str}"
+        year_str = f" ({int(row["year"])})" if pd.notna(row["year"]) else ""
+        title = f"{row['original_title']}{year_str}"
 
-        actor_ids = [aid.strip() for aid in str(row["personIds"]).split(",") if aid.strip()]
+        actor_ids = [aid.strip() for aid in str(row["actors"]).split(",") if aid.strip()]
 
-        movies[row["tconst"]] = {
+        movies[row["movie_id"]] = {
             "title": title,
             "box_office":
-            float(row["adjusted_box_office"]) if row["adjusted_box_office"] is not None else 0.0,
+            float(row["adjusted_revenue"]) if row["adjusted_revenue"] is not None else 0.0,
             "actor_ids": actor_ids,
         }
 
         # Invert the relationship: track which movies each actor appears in
         for actor_id in actor_ids:
-            actor_to_movies.setdefault(actor_id, []).append(row["tconst"])
+            actor_to_movies.setdefault(actor_id, []).append(row["movie_id"])
 
     # Remove this chunk to include all movies even with no box office sales info (0 sales)
     # Remove movies with zero or missing box office values
@@ -87,12 +87,17 @@ def build_and_save(
 
     actors: dict = {}
     for _, row in actors_df.iterrows():
-        actors[row["nconst"]] = {
-            "name": row["primaryName"],
-            "movie_ids": actor_to_movies.get(row["nconst"], []),
+        actors[str(row["tmdb_id"])] = {
+            "name": row["name"],
+            "movie_ids": actor_to_movies.get(str(row["tmdb_id"]), []),
         }
     # Remove actors with no associated movies
-    actors = {nconst: info for nconst, info in actors.items() if info["movie_ids"]}
+    actors = {tmdb_id: info for tmdb_id, info in actors.items() if info["movie_ids"]}
+
+    # Remove actor_ids from movies that don't exist in the actors dict
+    for movie_id in movies:
+        movies[movie_id]["actor_ids"] = [
+            aid for aid in movies[movie_id]["actor_ids"] if aid in actors]
 
     data = {"movies": movies, "actors": actors}
 
@@ -253,12 +258,16 @@ def get_actors_for_movie(movie_id: str, data: dict) -> dict:
 # 6. Optimal shortest path – bidirectional BFS
 # ---------------------------------------------------------------------------
 
+# Could bundle positional arguments as single dict, but would make the function calls
+# more annoying to write. Going to supress the 1 over the pylint recommended # of arguments.
+# pylint: disable=too-many-arguments, too-many-positional-arguments
 def _reconstruct_path(
     forward_parents: dict,
     backward_parents: dict,
     meeting_actor: str,
     start: str,
     target: str,
+    data: dict
 ) -> list:
     """
     Reconstruct the full ordered path of (movie_id, actor_id) pairs from the
@@ -272,7 +281,7 @@ def _reconstruct_path(
     node = meeting_actor
     while node != start:
         movie_id, parent = forward_parents[node]
-        forward_steps.append((movie_id, node))
+        forward_steps.append((data["movies"][movie_id]["title"], data["actors"][node]["name"]))
         node = parent
     forward_steps.reverse()
 
@@ -281,7 +290,7 @@ def _reconstruct_path(
     node = meeting_actor
     while node != target:
         movie_id, child = backward_parents[node]
-        backward_steps.append((movie_id, child))
+        backward_steps.append((data["movies"][movie_id]["title"], data["actors"][child]["name"]))
         node = child
 
     return forward_steps + backward_steps
@@ -352,13 +361,14 @@ def calculate_shortest_path(start: str, target: str, data: dict) -> dict:
                                          forward_parents, backward_visited)
                 if meeting is not None:
                     path = _reconstruct_path(forward_parents, backward_parents,
-                                             meeting, start, target)
+                                             meeting, start, target, data)
                     return {"steps": len(path), "path": path, "is_successful": True}
         if backward_queue:
             meeting = expand_backward(backward_queue, backward_visited,
                                       backward_parents, forward_visited)
             if meeting is not None:
-                path = _reconstruct_path(forward_parents, backward_parents, meeting, start, target)
+                path = _reconstruct_path(forward_parents, backward_parents,
+                                         meeting, start, target, data)
                 return {"steps": len(path), "path": path, "is_successful": True}
 
     return {"steps": -1, "path": [], "is_successful": False}
@@ -477,7 +487,7 @@ def calculate_lowest_boxoffice_path(start: str, target: str, data: dict) -> dict
     if meeting_node is None or best_total == float("inf"):
         return {"total_box_office": -1.0, "path": [], "is_successful": False}
 
-    path = _reconstruct_path(fwd_parents, bwd_parents, meeting_node, start, target)
+    path = _reconstruct_path(fwd_parents, bwd_parents, meeting_node, start, target, data)
     return {"total_box_office": best_total, "path": path, "is_successful": True}
 
 # ---------------------------------------------------------------------------
