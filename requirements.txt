@@ -1,6 +1,6 @@
 pandas
 numpy
 sreamlit
-pylint==4.0.4
+pylint
 coverage
 pyarrow==23.0.1
