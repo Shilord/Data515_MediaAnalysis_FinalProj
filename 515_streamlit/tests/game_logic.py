@@ -12,6 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent / "515_streamlit"))
+
 from core.game_logic import (
     _reconstruct_path,
     calculate_lowest_boxoffice_path,
