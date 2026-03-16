@@ -79,10 +79,12 @@ class TestLoadData(unittest.TestCase):
 
     def setUp(self):
         """Write SAMPLE_DATA to a temp pickle file before each test."""
-        self.tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pkl")
+        self.tmp = tempfile.NamedTemporaryFile(  # pylint: disable=consider-using-with
+            delete=False, suffix=".pkl"
+        )
         pickle.dump(SAMPLE_DATA, self.tmp)
         self.tmp.close()
-
+        
     def tearDown(self):
         """Remove the temp file after each test."""
         os.unlink(self.tmp.name)
