@@ -3,9 +3,6 @@ test_game_logic.py
 ==================
 Unit tests for core/game_logic.py functions.
 
-Run with:
-    coverage run -m unittest discover
-    coverage report -m
 """
 
 import os
