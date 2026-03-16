@@ -1,0 +1,11 @@
+[MASTER]
+# Tell pylint where the source root is so 'core.*' imports resolve correctly
+source-roots=515_streamlit
+
+# Ignore third-party packages to avoid false positives from e.g. streamlit internals
+ignore-paths=^.*site-packages.*$
+
+[MESSAGES CONTROL]
+# E0401 import-error: pylint can't always resolve runtime imports (e.g. streamlit,
+# conda packages). These are caught by actually running the code, not linting.
+disable=import-error

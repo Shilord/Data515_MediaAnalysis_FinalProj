@@ -19,7 +19,6 @@ import random
 import heapq
 from collections import deque
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -61,7 +60,7 @@ def build_and_save(
 
     movies: dict = {}
     for _, row in movies_df.iterrows():
-        year_str = f" ({int(row['startYear'])})" if pd.notna(row['startYear']) else ""
+        year_str = f" ({int(row["startYear"])})" if pd.notna(row["startYear"]) else ""
         title = f"{row['originalTitle']}{year_str}"
 
         actor_ids = [aid.strip() for aid in str(row["personIds"]).split(",") if aid.strip()]
@@ -321,7 +320,7 @@ def calculate_shortest_path(start: str, target: str, data: dict) -> dict:
     forward_visited: set = {start}
     backward_visited: set = {target}
 
-    def expand_forward(queue, f_visited, f_parents, b_visited) -> Optional[str]:
+    def expand_forward(queue, f_visited, f_parents, b_visited) -> str | None:
         actor = queue.popleft()
         for mid in actors.get(actor, {}).get("movie_ids", []):
             for neighbor in movies.get(mid, {}).get("actor_ids", []):
@@ -333,7 +332,7 @@ def calculate_shortest_path(start: str, target: str, data: dict) -> dict:
                     return neighbor  # meeting point found
         return None
 
-    def expand_backward(queue, b_visited, b_parents, f_visited) -> Optional[str]:
+    def expand_backward(queue, b_visited, b_parents, f_visited) -> str | None:
         actor = queue.popleft()
         for mid in actors.get(actor, {}).get("movie_ids", []):
             for neighbor in movies.get(mid, {}).get("actor_ids", []):
