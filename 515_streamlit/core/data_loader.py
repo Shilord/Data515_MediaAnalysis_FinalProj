@@ -1,3 +1,5 @@
+"""Loads and caches game data for use across the Streamlit app."""
+
 import streamlit as st
 from core.game_logic import load_data
 
