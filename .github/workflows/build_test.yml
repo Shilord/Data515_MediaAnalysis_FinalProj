@@ -95,10 +95,10 @@ jobs:
 
       # Linting
       - name: Lint with pylint
+        working-directory: 515_streamlit
         run: |
-          pylint --recursive=y streamlit/
+          pylint --recursive=y core/
           pylint --recursive=y tests/
-          pylint --recursive=y game_logic/
 
       # Lastly: report code coverage to Coveralls.
       - name: Report code coverage to Coveralls
