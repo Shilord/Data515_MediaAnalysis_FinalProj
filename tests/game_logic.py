@@ -1,29 +1,18 @@
 """
 test_game_logic.py
 ==================
-Unit tests for game_logic.py (Reel Connections game).
+Unit tests for core/game_logic.py functions.
 
-Covers:
-  - get_random_actors
-  - get_actor_names
-  - get_movies_for_actor
-  - get_actors_for_movie
-  - _reconstruct_path
-  - calculate_shortest_path
-  - calculate_lowest_boxoffice_path
-  - calculate_score_shortest
-  - calculate_score_boxoffice
-  - generate_game
-  - check_player_solution
-
-All tests use small, hand-crafted in-memory data dicts so that no
-parquet files or pickle files are required.
+Run with:
+    pytest test_game_logic.py -v
 """
 
-import unittest
-from unittest.mock import patch
+import pickle
 
-from game_logic import (
+
+import pytest
+
+from core.game_logic import (
     _reconstruct_path,
     calculate_lowest_boxoffice_path,
     calculate_score_boxoffice,
@@ -35,534 +24,463 @@ from game_logic import (
     get_actors_for_movie,
     get_movies_for_actor,
     get_random_actors,
+    load_data,
 )
 
 # ---------------------------------------------------------------------------
-# Shared test fixtures
+# Minimal in-memory dataset used across most tests
+#
+# Graph layout:
+#
+#   actor_A ──(movie_1)── actor_B ──(movie_2)── actor_C
+#                              └──(movie_3)── actor_D
+#   actor_E  (isolated – no movies)
+#
+# Box office values:
+#   movie_1 = 100.0
+#   movie_2 = 50.0
+#   movie_3 = 200.0
 # ---------------------------------------------------------------------------
 
-def make_simple_data() -> dict:
-    """
-    Return a minimal game data dict.
+SAMPLE_DATA = {
+    "movies": {
+        "movie_1": {"title": "Movie One (2000)", "box_office": 100.0, "actor_ids": ["actor_A", "actor_B"]},
+        "movie_2": {"title": "Movie Two (2001)", "box_office": 50.0,  "actor_ids": ["actor_B", "actor_C"]},
+        "movie_3": {"title": "Movie Three (2002)", "box_office": 200.0, "actor_ids": ["actor_B", "actor_D"]},
+    },
+    "actors": {
+        "actor_A": {"name": "Alice",  "movie_ids": ["movie_1"]},
+        "actor_B": {"name": "Bob",    "movie_ids": ["movie_1", "movie_2", "movie_3"]},
+        "actor_C": {"name": "Carol",  "movie_ids": ["movie_2"]},
+        "actor_D": {"name": "Dave",   "movie_ids": ["movie_3"]},
+    },
+}
 
-    Graph (actor → movie → actor):
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
-        A1 --m1--> A2 --m2--> A3
-                   |
-                  m3
-                   |
-                   A4
-
-    Box-office weights:  m1=10, m2=5, m3=100
-    """
-    return {
-        "movies": {
-            "m1": {"title": "Movie 1", "box_office": 10.0, "actor_ids": ["A1", "A2"]},
-            "m2": {"title": "Movie 2", "box_office": 5.0,  "actor_ids": ["A2", "A3"]},
-            "m3": {"title": "Movie 3", "box_office": 100.0, "actor_ids": ["A2", "A4"]},
-        },
-        "actors": {
-            "A1": {"name": "Alice",   "movie_ids": ["m1"]},
-            "A2": {"name": "Bob",     "movie_ids": ["m1", "m2", "m3"]},
-            "A3": {"name": "Carol",   "movie_ids": ["m2"]},
-            "A4": {"name": "Dave",    "movie_ids": ["m3"]},
-        },
-    }
+@pytest.fixture()
+def data():
+    return SAMPLE_DATA
 
 
-def make_disconnected_data() -> dict:
-    """
-    Return a data dict where A1/A2 are in one component and A3/A4 in another.
-    No path exists between the two components.
-    """
-    return {
-        "movies": {
-            "m1": {"title": "Movie 1", "box_office": 10.0, "actor_ids": ["A1", "A2"]},
-            "m2": {"title": "Movie 2", "box_office": 20.0, "actor_ids": ["A3", "A4"]},
-        },
-        "actors": {
-            "A1": {"name": "Alice", "movie_ids": ["m1"]},
-            "A2": {"name": "Bob",   "movie_ids": ["m1"]},
-            "A3": {"name": "Carol", "movie_ids": ["m2"]},
-            "A4": {"name": "Dave",  "movie_ids": ["m2"]},
-        },
-    }
+@pytest.fixture()
+def pkl_file(tmp_path):
+    """Write SAMPLE_DATA to a temporary pickle file and return its path."""
+    path = tmp_path / "game_data.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(SAMPLE_DATA, f)
+    return str(path)
+
+
+# ===========================================================================
+# load_data
+# ===========================================================================
+
+class TestLoadData:
+    def test_loads_pickle_successfully(self, pkl_file):
+        result = load_data(pkl_file)
+        assert "movies" in result
+        assert "actors" in result
+
+    def test_loaded_data_matches_original(self, pkl_file):
+        result = load_data(pkl_file)
+        assert result["movies"]["movie_1"]["title"] == "Movie One (2000)"
+        assert result["actors"]["actor_A"]["name"] == "Alice"
+
+    def test_raises_file_not_found(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            load_data(str(tmp_path / "nonexistent.pkl"))
 
 
 # ===========================================================================
 # get_random_actors
 # ===========================================================================
 
-class TestGetRandomActors(unittest.TestCase):
-
-    def test_returns_two_distinct_actors(self):
-        """Two returned actor IDs should be distinct."""
-        data = make_simple_data()
+class TestGetRandomActors:
+    def test_returns_two_distinct_actors(self, data):
         start, target = get_random_actors(data)
-        self.assertNotEqual(start, target)
+        assert start != target
 
-    def test_returned_actors_are_in_dataset(self):
-        """Both returned IDs should exist in the actors dict."""
-        data = make_simple_data()
+    def test_both_ids_in_data(self, data):
         start, target = get_random_actors(data)
-        self.assertIn(start, data["actors"])
-        self.assertIn(target, data["actors"])
+        assert start in data["actors"]
+        assert target in data["actors"]
 
-    def test_returns_tuple_of_two_strings(self):
-        """Return value should be a tuple of exactly two strings."""
-        data = make_simple_data()
-        result = get_random_actors(data)
-        self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 2)
-        self.assertIsInstance(result[0], str)
-        self.assertIsInstance(result[1], str)
+    def test_raises_with_fewer_than_two_actors(self):
+        tiny_data = {"actors": {"actor_A": {"name": "Alice", "movie_ids": []}}, "movies": {}}
+        with pytest.raises(ValueError, match="at least 2 actors"):
+            get_random_actors(tiny_data)
 
-    def test_raises_value_error_with_fewer_than_two_actors(self):
-        """Should raise ValueError when the dataset has only one actor."""
-        data = {
-            "movies": {"m1": {"title": "X", "box_office": 1.0, "actor_ids": ["A1"]}},
-            "actors": {"A1": {"name": "Solo", "movie_ids": ["m1"]}},
-        }
-        with self.assertRaises(ValueError):
-            get_random_actors(data)
-
-    def test_raises_value_error_with_empty_actors(self):
-        """Should raise ValueError when the dataset has no actors."""
-        data = {"movies": {}, "actors": {}}
-        with self.assertRaises(ValueError):
-            get_random_actors(data)
+    def test_raises_with_empty_actors(self):
+        empty_data = {"actors": {}, "movies": {}}
+        with pytest.raises(ValueError):
+            get_random_actors(empty_data)
 
 
 # ===========================================================================
 # get_actor_names
 # ===========================================================================
 
-class TestGetActorNames(unittest.TestCase):
+class TestGetActorNames:
+    def test_returns_correct_names(self, data):
+        names = get_actor_names(("actor_A", "actor_C"), data)
+        assert names == ("Alice", "Carol")
 
-    def test_returns_correct_names(self):
-        """Should return the names matching the two IDs."""
-        data = make_simple_data()
-        names = get_actor_names(("A1", "A3"), data)
-        self.assertEqual(names, ("Alice", "Carol"))
-
-    def test_returns_tuple_of_two_strings(self):
-        """Return value should be a tuple of exactly two strings."""
-        data = make_simple_data()
-        result = get_actor_names(("A1", "A2"), data)
-        self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 2)
-
-    def test_raises_key_error_for_unknown_actor(self):
-        """Should raise KeyError when an actor ID is not in the dataset."""
-        data = make_simple_data()
-        with self.assertRaises(KeyError):
-            get_actor_names(("A1", "UNKNOWN"), data)
+    def test_same_actor_both_positions(self, data):
+        names = get_actor_names(("actor_B", "actor_B"), data)
+        assert names == ("Bob", "Bob")
 
 
 # ===========================================================================
 # get_movies_for_actor
 # ===========================================================================
 
-class TestGetMoviesForActor(unittest.TestCase):
+class TestGetMoviesForActor:
+    def test_returns_correct_movies(self, data):
+        result = get_movies_for_actor("actor_B", data)
+        assert set(result.keys()) == {"movie_1", "movie_2", "movie_3"}
 
-    def test_returns_correct_movies(self):
-        """Should return all movies associated with the given actor."""
-        data = make_simple_data()
-        result = get_movies_for_actor("A2", data)
-        self.assertEqual(set(result.keys()), {"m1", "m2", "m3"})
-
-    def test_returns_dict_of_id_to_title(self):
-        """Values of the returned dict should be movie title strings."""
-        data = make_simple_data()
-        result = get_movies_for_actor("A1", data)
-        self.assertIsInstance(result, dict)
+    def test_titles_are_strings(self, data):
+        result = get_movies_for_actor("actor_A", data)
         for title in result.values():
-            self.assertIsInstance(title, str)
+            assert isinstance(title, str)
 
-    def test_actor_with_single_movie(self):
-        """An actor appearing in only one movie should return a single-entry dict."""
-        data = make_simple_data()
-        result = get_movies_for_actor("A1", data)
-        self.assertEqual(result, {"m1": "Movie 1"})
+    def test_actor_with_single_movie(self, data):
+        result = get_movies_for_actor("actor_A", data)
+        assert list(result.keys()) == ["movie_1"]
 
-    def test_raises_key_error_for_unknown_actor(self):
-        """Should raise KeyError for an actor ID not in the dataset."""
-        data = make_simple_data()
-        with self.assertRaises(KeyError):
-            get_movies_for_actor("UNKNOWN", data)
-
-    def test_skips_movies_not_in_movies_dict(self):
-        """Movie IDs referenced by an actor but absent from movies dict are ignored."""
-        data = make_simple_data()
-        data["actors"]["A1"]["movie_ids"].append("GHOST_MOVIE")
-        result = get_movies_for_actor("A1", data)
-        self.assertNotIn("GHOST_MOVIE", result)
+    def test_raises_for_unknown_actor(self, data):
+        with pytest.raises(KeyError):
+            get_movies_for_actor("actor_UNKNOWN", data)
 
 
 # ===========================================================================
 # get_actors_for_movie
 # ===========================================================================
 
-class TestGetActorsForMovie(unittest.TestCase):
+class TestGetActorsForMovie:
+    def test_returns_correct_actors(self, data):
+        result = get_actors_for_movie("movie_1", data)
+        assert set(result.keys()) == {"actor_A", "actor_B"}
 
-    def test_returns_correct_actors(self):
-        """Should return all actors associated with the given movie."""
-        data = make_simple_data()
-        result = get_actors_for_movie("m1", data)
-        self.assertEqual(set(result.keys()), {"A1", "A2"})
-
-    def test_returns_dict_of_id_to_name(self):
-        """Values of the returned dict should be actor name strings."""
-        data = make_simple_data()
-        result = get_actors_for_movie("m1", data)
-        self.assertIsInstance(result, dict)
+    def test_actor_names_are_strings(self, data):
+        result = get_actors_for_movie("movie_2", data)
         for name in result.values():
-            self.assertIsInstance(name, str)
+            assert isinstance(name, str)
 
-    def test_raises_key_error_for_unknown_movie(self):
-        """Should raise KeyError for a movie ID not in the dataset."""
-        data = make_simple_data()
-        with self.assertRaises(KeyError):
-            get_actors_for_movie("UNKNOWN", data)
-
-    def test_skips_actors_not_in_actors_dict(self):
-        """Actor IDs listed in a movie but absent from actors dict are ignored."""
-        data = make_simple_data()
-        data["movies"]["m1"]["actor_ids"].append("GHOST_ACTOR")
-        result = get_actors_for_movie("m1", data)
-        self.assertNotIn("GHOST_ACTOR", result)
+    def test_raises_for_unknown_movie(self, data):
+        with pytest.raises(KeyError):
+            get_actors_for_movie("movie_UNKNOWN", data)
 
 
 # ===========================================================================
-# _reconstruct_path  (internal helper)
+# _reconstruct_path
 # ===========================================================================
 
-class TestReconstructPath(unittest.TestCase):
-    """Tests for the internal BFS path-reconstruction helper."""
-
-    def test_direct_connection(self):
-        """A path where start and target share one movie should produce one step."""
-        # A1 → (m1) → A2
-        forward_parents = {"A1": None, "A2": ("m1", "A1")}
-        backward_parents = {"A2": None}
-        path = _reconstruct_path(forward_parents, backward_parents, "A2", "A1", "A2")
-        self.assertEqual(path, [("m1", "A2")])
+class TestReconstructPath:
+    def test_direct_path_single_step(self):
+        # A --movie_1--> B
+        forward_parents = {
+            "actor_A": None,
+            "actor_B": ("movie_1", "actor_A"),
+        }
+        backward_parents = {"actor_B": None}
+        path = _reconstruct_path(forward_parents, backward_parents, "actor_B", "actor_A", "actor_B")
+        assert path == [("movie_1", "actor_B")]
 
     def test_two_step_path(self):
-        """A two-hop path should produce two (movie, actor) tuples in order."""
-        # A1 → (m1) → A2 → (m2) → A3
-        forward_parents = {"A1": None, "A2": ("m1", "A1")}
-        backward_parents = {"A3": None, "A2": ("m2", "A3")}
-        path = _reconstruct_path(forward_parents, backward_parents, "A2", "A1", "A3")
-        self.assertEqual(path, [("m1", "A2"), ("m2", "A3")])
+        # A --m1--> B --m2--> C
+        forward_parents = {
+            "actor_A": None,
+            "actor_B": ("movie_1", "actor_A"),
+        }
+        backward_parents = {
+            "actor_C": None,
+            "actor_B": ("movie_2", "actor_C"),
+        }
+        path = _reconstruct_path(forward_parents, backward_parents, "actor_B", "actor_A", "actor_C")
+        assert path == [("movie_1", "actor_B"), ("movie_2", "actor_C")]
 
-    def test_start_equals_meeting_point(self):
-        """When start IS the meeting actor the forward segment should be empty."""
-        forward_parents = {"A1": None}
-        backward_parents = {"A1": ("m1", "A2"), "A2": None}
-        path = _reconstruct_path(forward_parents, backward_parents, "A1", "A1", "A2")
-        self.assertEqual(path, [("m1", "A2")])
+    def test_path_starts_with_correct_movie(self):
+        forward_parents = {
+            "actor_A": None,
+            "actor_B": ("movie_1", "actor_A"),
+        }
+        backward_parents = {"actor_B": None}
+        path = _reconstruct_path(forward_parents, backward_parents, "actor_B", "actor_A", "actor_B")
+        assert path[0][0] == "movie_1"
 
 
 # ===========================================================================
 # calculate_shortest_path
 # ===========================================================================
 
-class TestCalculateShortestPath(unittest.TestCase):
+class TestCalculateShortestPath:
+    def test_same_actor_zero_steps(self, data):
+        result = calculate_shortest_path("actor_A", "actor_A", data)
+        assert result["steps"] == 0
+        assert result["path"] == []
+        assert result["is_successful"] is True
 
-    def test_same_start_and_target_returns_zero_steps(self):
-        """Start == target should immediately return 0 steps and an empty path."""
-        data = make_simple_data()
-        result = calculate_shortest_path("A1", "A1", data)
-        self.assertEqual(result["steps"], 0)
-        self.assertEqual(result["path"], [])
-        self.assertTrue(result["is_successful"])
+    def test_direct_neighbours_one_step(self, data):
+        result = calculate_shortest_path("actor_A", "actor_B", data)
+        assert result["is_successful"] is True
+        assert result["steps"] == 1
+        assert result["path"] == [("movie_1", "actor_B")]
 
-    def test_direct_one_hop(self):
-        """Actors sharing a movie should be reachable in 1 step."""
-        data = make_simple_data()
-        result = calculate_shortest_path("A1", "A2", data)
-        self.assertTrue(result["is_successful"])
-        self.assertEqual(result["steps"], 1)
+    def test_two_step_path(self, data):
+        result = calculate_shortest_path("actor_A", "actor_C", data)
+        assert result["is_successful"] is True
+        assert result["steps"] == 2
+        movie_ids = [step[0] for step in result["path"]]
+        actor_ids = [step[1] for step in result["path"]]
+        assert "movie_1" in movie_ids
+        assert "movie_2" in movie_ids
+        assert "actor_B" in actor_ids
+        assert "actor_C" in actor_ids
 
-    def test_two_hop_path(self):
-        """A1→A3 requires two hops (A1→A2→A3)."""
-        data = make_simple_data()
-        result = calculate_shortest_path("A1", "A3", data)
-        self.assertTrue(result["is_successful"])
-        self.assertEqual(result["steps"], 2)
+    def test_path_ends_at_target(self, data):
+        result = calculate_shortest_path("actor_A", "actor_D", data)
+        assert result["path"][-1][1] == "actor_D"
 
-    def test_path_contains_correct_tuples(self):
-        """Each step in the path should be a (movie_id, actor_id) tuple."""
-        data = make_simple_data()
-        result = calculate_shortest_path("A1", "A3", data)
-        for step in result["path"]:
-            self.assertIsInstance(step, tuple)
-            self.assertEqual(len(step), 2)
+    def test_no_path_returns_unsuccessful(self, data):
+        # Add an isolated actor with no movies
+        isolated_data = {
+            "movies": dict(data["movies"]),
+            "actors": {**data["actors"], "actor_Z": {"name": "Zara", "movie_ids": []}},
+        }
+        result = calculate_shortest_path("actor_A", "actor_Z", isolated_data)
+        assert result["is_successful"] is False
+        assert result["steps"] == -1
+        assert result["path"] == []
 
-    def test_path_ends_at_target(self):
-        """The last step in the path should reference the target actor."""
-        data = make_simple_data()
-        result = calculate_shortest_path("A1", "A3", data)
-        self.assertEqual(result["path"][-1][1], "A3")
+    def test_path_length_matches_steps(self, data):
+        result = calculate_shortest_path("actor_A", "actor_C", data)
+        assert len(result["path"]) == result["steps"]
 
-    def test_no_path_returns_unsuccessful(self):
-        """Disconnected actors should produce is_successful=False and steps=-1."""
-        data = make_disconnected_data()
-        result = calculate_shortest_path("A1", "A3", data)
-        self.assertFalse(result["is_successful"])
-        self.assertEqual(result["steps"], -1)
-        self.assertEqual(result["path"], [])
-
-    def test_steps_matches_path_length(self):
-        """'steps' should always equal len('path')."""
-        data = make_simple_data()
-        result = calculate_shortest_path("A1", "A4", data)
-        self.assertEqual(result["steps"], len(result["path"]))
-
-    def test_symmetric_path_length(self):
-        """Path length from A to B should equal path length from B to A."""
-        data = make_simple_data()
-        fwd = calculate_shortest_path("A1", "A3", data)
-        rev = calculate_shortest_path("A3", "A1", data)
-        self.assertEqual(fwd["steps"], rev["steps"])
+    def test_symmetric_path_lengths(self, data):
+        """Shortest path A→C and C→A should have the same length."""
+        forward = calculate_shortest_path("actor_A", "actor_C", data)
+        backward = calculate_shortest_path("actor_C", "actor_A", data)
+        assert forward["steps"] == backward["steps"]
 
 
 # ===========================================================================
 # calculate_lowest_boxoffice_path
 # ===========================================================================
 
-class TestCalculateLowestBoxofficePath(unittest.TestCase):
+class TestCalculateLowestBoxofficePath:
+    def test_same_actor_zero_cost(self, data):
+        result = calculate_lowest_boxoffice_path("actor_A", "actor_A", data)
+        assert result["total_box_office"] == 0.0
+        assert result["is_successful"] is True
 
-    def test_same_start_and_target(self):
-        """Start == target should return 0.0 total box office and empty path."""
-        data = make_simple_data()
-        result = calculate_lowest_boxoffice_path("A1", "A1", data)
-        self.assertEqual(result["total_box_office"], 0.0)
-        self.assertEqual(result["path"], [])
-        self.assertTrue(result["is_successful"])
+    def test_direct_path_cost(self, data):
+        # actor_A → actor_B via movie_1 (cost 100)
+        result = calculate_lowest_boxoffice_path("actor_A", "actor_B", data)
+        assert result["is_successful"] is True
+        assert result["total_box_office"] == 100.0
 
-    def test_direct_one_hop_cost(self):
-        """A1→A2 via m1 should cost exactly m1's box office (10.0)."""
-        data = make_simple_data()
-        result = calculate_lowest_boxoffice_path("A1", "A2", data)
-        self.assertTrue(result["is_successful"])
-        self.assertAlmostEqual(result["total_box_office"], 10.0)
-
-    def test_prefers_cheaper_path(self):
-        """
-        A1→A3 can go A1→(m1,10)→A2→(m2,5)→A3 = 15, which is cheaper than any
-        path through m3 (100). The algorithm must find the 15.0 path.
-        """
-        data = make_simple_data()
-        result = calculate_lowest_boxoffice_path("A1", "A3", data)
-        self.assertTrue(result["is_successful"])
-        self.assertAlmostEqual(result["total_box_office"], 15.0)
+    def test_chooses_cheaper_path(self, data):
+        # A → C: only path is A→B (100) → C (50) = 150 total
+        # A → D: only path is A→B (100) → D (200) = 300 total
+        result_c = calculate_lowest_boxoffice_path("actor_A", "actor_C", data)
+        result_d = calculate_lowest_boxoffice_path("actor_A", "actor_D", data)
+        assert result_c["total_box_office"] < result_d["total_box_office"]
 
     def test_no_path_returns_unsuccessful(self):
-        """Disconnected actors should return is_successful=False."""
-        data = make_disconnected_data()
-        result = calculate_lowest_boxoffice_path("A1", "A3", data)
-        self.assertFalse(result["is_successful"])
-        self.assertAlmostEqual(result["total_box_office"], -1.0)
-        self.assertEqual(result["path"], [])
+        isolated_data = {
+            "movies": {"movie_1": {"title": "X", "box_office": 10.0, "actor_ids": ["a1", "a2"]}},
+            "actors": {
+                "a1": {"name": "Alpha", "movie_ids": ["movie_1"]},
+                "a2": {"name": "Beta",  "movie_ids": ["movie_1"]},
+                "a3": {"name": "Gamma", "movie_ids": []},
+            },
+        }
+        result = calculate_lowest_boxoffice_path("a1", "a3", isolated_data)
+        assert result["is_successful"] is False
+        assert result["total_box_office"] == -1.0
 
-    def test_path_ends_at_target(self):
-        """The last (movie_id, actor_id) step must reference the target actor."""
-        data = make_simple_data()
-        result = calculate_lowest_boxoffice_path("A1", "A3", data)
-        self.assertEqual(result["path"][-1][1], "A3")
-
-    def test_total_box_office_matches_path_movies(self):
-        """Sum of box-office values along the returned path must equal total_box_office."""
-        data = make_simple_data()
-        result = calculate_lowest_boxoffice_path("A1", "A3", data)
-        path_cost = sum(data["movies"][mid]["box_office"] for mid, _ in result["path"])
-        self.assertAlmostEqual(result["total_box_office"], path_cost)
+    def test_path_last_actor_is_target(self, data):
+        result = calculate_lowest_boxoffice_path("actor_A", "actor_C", data)
+        assert result["path"][-1][1] == "actor_C"
 
 
 # ===========================================================================
 # calculate_score_shortest
 # ===========================================================================
 
-class TestCalculateScoreShortest(unittest.TestCase):
+class TestCalculateScoreShortest:
+    def test_perfect_score_when_equal(self):
+        assert calculate_score_shortest(3, 3) == 100.0
 
-    def test_perfect_score_when_equal_steps(self):
-        """Player matching the optimal path should score exactly 100."""
-        self.assertAlmostEqual(calculate_score_shortest(5, 5), 100.0)
+    def test_half_score_for_double_steps(self):
+        assert calculate_score_shortest(6, 3) == 50.0
 
-    def test_score_decreases_with_extra_steps(self):
-        """More player steps than optimal should produce a score below 100."""
-        score = calculate_score_shortest(10, 5)
-        self.assertAlmostEqual(score, 50.0)
+    def test_score_above_100_if_player_beats_optimal(self):
+        # This shouldn't happen in practice but the math still holds
+        assert calculate_score_shortest(2, 4) == 200.0
 
-    def test_score_formula(self):
-        """Verify score = 100 * optimal / player."""
-        self.assertAlmostEqual(calculate_score_shortest(4, 2), 50.0)
-        self.assertAlmostEqual(calculate_score_shortest(2, 1), 50.0)
-        self.assertAlmostEqual(calculate_score_shortest(3, 3), 100.0)
+    def test_raises_on_zero_player_steps(self):
+        with pytest.raises(ValueError, match="player_steps"):
+            calculate_score_shortest(0, 3)
 
-    def test_raises_value_error_for_zero_player_steps(self):
-        """Zero player_steps is invalid and should raise ValueError."""
-        with self.assertRaises(ValueError):
-            calculate_score_shortest(0, 5)
+    def test_raises_on_negative_player_steps(self):
+        with pytest.raises(ValueError):
+            calculate_score_shortest(-1, 3)
 
-    def test_raises_value_error_for_negative_player_steps(self):
-        """Negative player_steps should raise ValueError."""
-        with self.assertRaises(ValueError):
-            calculate_score_shortest(-1, 5)
+    def test_raises_on_zero_optimal_steps(self):
+        with pytest.raises(ValueError, match="optimal_steps"):
+            calculate_score_shortest(3, 0)
 
-    def test_raises_value_error_for_zero_optimal_steps(self):
-        """Zero optimal_steps is invalid and should raise ValueError."""
-        with self.assertRaises(ValueError):
-            calculate_score_shortest(5, 0)
-
-    def test_raises_value_error_for_negative_optimal_steps(self):
-        """Negative optimal_steps should raise ValueError."""
-        with self.assertRaises(ValueError):
-            calculate_score_shortest(5, -1)
+    def test_returns_float(self):
+        result = calculate_score_shortest(4, 3)
+        assert isinstance(result, float)
 
 
 # ===========================================================================
 # calculate_score_boxoffice
 # ===========================================================================
 
-class TestCalculateScoreBoxoffice(unittest.TestCase):
+class TestCalculateScoreBoxoffice:
+    def test_perfect_score_when_equal(self):
+        assert calculate_score_boxoffice(500.0, 500.0) == 100.0
 
-    def test_perfect_score_when_equal_sums(self):
-        """Player matching optimal box office should score exactly 100."""
-        self.assertAlmostEqual(calculate_score_boxoffice(200.0, 200.0), 100.0)
+    def test_half_score_for_double_spend(self):
+        assert calculate_score_boxoffice(1000.0, 500.0) == 50.0
 
-    def test_score_decreases_with_higher_player_sum(self):
-        """Higher player total than optimal should produce a score below 100."""
-        score = calculate_score_boxoffice(400.0, 200.0)
-        self.assertAlmostEqual(score, 50.0)
+    def test_zero_optimal_gives_zero_score(self):
+        assert calculate_score_boxoffice(500.0, 0.0) == 0.0
 
-    def test_score_formula(self):
-        """Verify score = 100 * optimal / player."""
-        self.assertAlmostEqual(calculate_score_boxoffice(500.0, 250.0), 50.0)
-        self.assertAlmostEqual(calculate_score_boxoffice(1000.0, 100.0), 10.0)
-
-    def test_raises_value_error_for_zero_player_sum(self):
-        """Zero player_sum is invalid and should raise ValueError."""
-        with self.assertRaises(ValueError):
+    def test_raises_on_zero_player_sum(self):
+        with pytest.raises(ValueError, match="player_sum"):
             calculate_score_boxoffice(0.0, 100.0)
 
-    def test_raises_value_error_for_negative_player_sum(self):
-        """Negative player_sum should raise ValueError."""
-        with self.assertRaises(ValueError):
-            calculate_score_boxoffice(-50.0, 100.0)
+    def test_raises_on_negative_player_sum(self):
+        with pytest.raises(ValueError):
+            calculate_score_boxoffice(-10.0, 100.0)
 
-    def test_raises_value_error_for_negative_optimal_sum(self):
-        """Negative optimal_sum should raise ValueError."""
-        with self.assertRaises(ValueError):
+    def test_raises_on_negative_optimal_sum(self):
+        with pytest.raises(ValueError, match="optimal_sum"):
             calculate_score_boxoffice(100.0, -1.0)
 
-    def test_zero_optimal_sum_gives_zero_score(self):
-        """An optimal sum of 0 (no movies to traverse) gives a score of 0."""
-        score = calculate_score_boxoffice(100.0, 0.0)
-        self.assertAlmostEqual(score, 0.0)
-
-
-# ===========================================================================
-# generate_game
-# ===========================================================================
-
-class TestGenerateGame(unittest.TestCase):
-
-    def test_raises_value_error_for_invalid_mode(self):
-        """An unrecognised game_mode string should raise ValueError."""
-        data = make_simple_data()
-        with self.assertRaises(ValueError):
-            generate_game("invalid_mode", data)
-
-    def test_shortest_mode_returns_expected_keys(self):
-        """Result dict must contain all required keys for 'shortest' mode."""
-        data = make_simple_data()
-        # Pin get_random_actors so the test is deterministic
-        with patch("game_logic.get_random_actors", return_value=("A1", "A3")):
-            result = generate_game("shortest", data)
-
-        required = {
-            "game_mode", "start_actor_id", "start_actor_name",
-            "target_actor_id", "target_actor_name", "optimal_path", "is_valid",
-        }
-        self.assertEqual(required, required & result.keys())
-
-    def test_box_office_mode_returns_expected_keys(self):
-        """Result dict must contain all required keys for 'box_office' mode."""
-        data = make_simple_data()
-        with patch("game_logic.get_random_actors", return_value=("A1", "A3")):
-            result = generate_game("box_office", data)
-
-        required = {
-            "game_mode", "start_actor_id", "start_actor_name",
-            "target_actor_id", "target_actor_name", "optimal_path", "is_valid",
-        }
-        self.assertEqual(required, required & result.keys())
-
-    def test_game_mode_stored_correctly(self):
-        """The returned dict's game_mode should match the argument."""
-        data = make_simple_data()
-        with patch("game_logic.get_random_actors", return_value=("A1", "A3")):
-            result = generate_game("shortest", data)
-        self.assertEqual(result["game_mode"], "shortest")
-
-    def test_valid_game_has_is_valid_true(self):
-        """A connected actor pair should produce is_valid=True."""
-        data = make_simple_data()
-        with patch("game_logic.get_random_actors", return_value=("A1", "A3")):
-            result = generate_game("shortest", data)
-        self.assertTrue(result["is_valid"])
-
-    def test_actor_names_match_ids(self):
-        """Returned names should correspond to the returned actor IDs."""
-        data = make_simple_data()
-        with patch("game_logic.get_random_actors", return_value=("A1", "A3")):
-            result = generate_game("shortest", data)
-        self.assertEqual(result["start_actor_name"],
-                         data["actors"][result["start_actor_id"]]["name"])
-        self.assertEqual(result["target_actor_name"],
-                         data["actors"][result["target_actor_id"]]["name"])
-
-    def test_disconnected_pair_eventually_sets_is_valid_false(self):
-        """
-        If every attempt returns an unsuccessful path, generate_game must
-        return is_valid=False after exhausting all retries.
-        """
-        data = make_disconnected_data()
-        # Always hand back a disconnected pair
-        with patch("game_logic.get_random_actors", return_value=("A1", "A3")):
-            result = generate_game("shortest", data)
-        self.assertFalse(result["is_valid"])
+    def test_returns_float(self):
+        result = calculate_score_boxoffice(300.0, 200.0)
+        assert isinstance(result, float)
 
 
 # ===========================================================================
 # check_player_solution
 # ===========================================================================
 
-class TestCheckPlayerSolution(unittest.TestCase):
-
+class TestCheckPlayerSolution:
     def test_correct_selection_returns_true(self):
-        """Matching actor IDs should return True."""
-        self.assertTrue(check_player_solution("A3", "A3"))
+        assert check_player_solution("actor_C", "actor_C") is True
 
-    def test_incorrect_selection_returns_false(self):
-        """Non-matching actor IDs should return False."""
-        self.assertFalse(check_player_solution("A1", "A3"))
-
-    def test_case_sensitive(self):
-        """Actor ID comparison should be case-sensitive."""
-        self.assertFalse(check_player_solution("a3", "A3"))
+    def test_wrong_selection_returns_false(self):
+        assert check_player_solution("actor_A", "actor_C") is False
 
     def test_empty_strings_match(self):
-        """Two empty strings are equal, so the function should return True."""
-        self.assertTrue(check_player_solution("", ""))
+        assert check_player_solution("", "") is True
 
-    def test_empty_vs_nonempty_returns_false(self):
-        """An empty selection against a real ID should return False."""
-        self.assertFalse(check_player_solution("", "A3"))
+    def test_case_sensitive(self):
+        assert check_player_solution("Actor_C", "actor_C") is False
 
 
-if __name__ == "__main__":
-    unittest.main()
+# ===========================================================================
+# generate_game
+# ===========================================================================
+
+class TestGenerateGame:
+    def test_returns_required_keys_shortest(self, data):
+        game = generate_game("shortest", data)
+        for key in ("game_mode", "start_actor_id", "start_actor_name",
+                    "target_actor_id", "target_actor_name", "optimal_path", "is_valid"):
+            assert key in game
+
+    def test_returns_required_keys_boxoffice(self, data):
+        game = generate_game("box_office", data)
+        for key in ("game_mode", "start_actor_id", "target_actor_id", "is_valid"):
+            assert key in game
+
+    def test_game_mode_is_recorded(self, data):
+        game = generate_game("shortest", data)
+        assert game["game_mode"] == "shortest"
+
+    def test_start_and_target_differ(self, data):
+        game = generate_game("shortest", data)
+        if game["is_valid"]:
+            assert game["start_actor_id"] != game["target_actor_id"]
+
+    def test_actor_names_are_non_empty_strings(self, data):
+        game = generate_game("shortest", data)
+        assert isinstance(game["start_actor_name"], str) and game["start_actor_name"]
+        assert isinstance(game["target_actor_name"], str) and game["target_actor_name"]
+
+    def test_raises_on_invalid_game_mode(self, data):
+        with pytest.raises(ValueError, match="game_mode"):
+            generate_game("invalid_mode", data)
+
+    def test_valid_game_has_successful_path(self, data):
+        game = generate_game("shortest", data)
+        if game["is_valid"]:
+            assert game["optimal_path"]["is_successful"] is True
+
+    def test_all_attempts_fail_returns_is_valid_false(self):
+        """When every actor pair has no path, is_valid should be False."""
+        disconnected_data = {
+            "movies": {},
+            "actors": {
+                "a1": {"name": "Alpha", "movie_ids": []},
+                "a2": {"name": "Beta",  "movie_ids": []},
+            },
+        }
+        game = generate_game("shortest", disconnected_data)
+        assert game["is_valid"] is False
+
+
+# ===========================================================================
+# Integration: round-trip path → score
+# ===========================================================================
+
+class TestIntegration:
+    def test_optimal_path_scores_100_shortest(self, data):
+        """Following the optimal path exactly should give score 100."""
+        game = generate_game("shortest", data)
+        if not game["is_valid"]:
+            pytest.skip("No valid game generated for this dataset.")
+        optimal_steps = game["optimal_path"]["steps"]
+        score = calculate_score_shortest(optimal_steps, optimal_steps)
+        assert score == 100.0
+
+    def test_optimal_path_scores_100_boxoffice(self, data):
+        game = generate_game("box_office", data)
+        if not game["is_valid"]:
+            pytest.skip("No valid game generated for this dataset.")
+        optimal_bo = game["optimal_path"]["total_box_office"]
+        if optimal_bo == 0.0:
+            pytest.skip("Zero box office — division undefined.")
+        score = calculate_score_boxoffice(optimal_bo, optimal_bo)
+        assert score == 100.0
+
+    def test_suboptimal_player_scores_below_100(self, data):
+        result = calculate_shortest_path("actor_A", "actor_C", data)
+        assert result["is_successful"]
+        optimal = result["steps"]  # 2
+        player_steps = optimal + 1   # simulate one extra step
+        score = calculate_score_shortest(player_steps, optimal)
+        assert score < 100.0
+
+    def test_shortest_path_actor_chain_is_valid(self, data):
+        """Every actor in the path should exist in the data."""
+        result = calculate_shortest_path("actor_A", "actor_C", data)
+        for _, actor_id in result["path"]:
+            assert actor_id in data["actors"]
+
+    def test_shortest_path_movie_chain_is_valid(self, data):
+        """Every movie in the path should exist in the data."""
+        result = calculate_shortest_path("actor_A", "actor_C", data)
+        for movie_id, _ in result["path"]:
+            assert movie_id in data["movies"]

@@ -2,5 +2,6 @@ pandas
 numpy
 streamlit
 pylint
+pytest
 coverage
 pyarrow==23.0.1
