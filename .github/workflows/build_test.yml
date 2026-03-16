@@ -87,8 +87,9 @@ jobs:
 
       # Next step: run the unit tests with code coverage.
       - name: Unit tests
+        working-directory: 515_streamlit
         run: |
-          coverage run -m unittest discover
+          coverage run -m unittest discover -s tests
           coverage report
           coverage lcov
 
